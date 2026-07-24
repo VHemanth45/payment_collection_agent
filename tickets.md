@@ -127,16 +127,16 @@ These tickets are ordered in dependency order. Each ticket declares its blocking
 
 **Blocked by:** 07 — Handle Recoverable and Terminal Payment Failures.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Regex extraction still runs on every user turn before any extractor call.
-- [ ] The extractor is called only when required fields are missing after regex extraction.
-- [ ] Only the logical schema group relevant to the current state is requested.
-- [ ] Missing extractor fields are represented as null rather than guessed values.
-- [ ] Extractor output does not override better regex-derived values.
-- [ ] Out-of-order fields recognized by regex are retained without skipping required verification or payment phases.
-- [ ] Business logic does not depend on free-form extractor response text.
-- [ ] Tests cover schema selection, forced extraction behavior, null missing fields, merge behavior, and deterministic state transitions.
+- [x] Regex extraction still runs on every user turn before any extractor call.
+- [x] The extractor is called only when required fields are missing after regex extraction.
+- [x] Only the logical schema group relevant to the current state is requested.
+- [x] Missing extractor fields are represented as null rather than guessed values.
+- [x] Extractor output does not override better regex-derived values.
+- [x] Out-of-order fields recognized by regex are retained without skipping required verification or payment phases.
+- [x] Business logic does not depend on free-form extractor response text.
+- [x] Tests cover schema selection, forced extraction behavior, null missing fields, merge behavior, and deterministic state transitions.
 
 ## 09 — Harden Sensitive-Data Handling and Deterministic Messaging
 
