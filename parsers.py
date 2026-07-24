@@ -12,6 +12,7 @@ from models import (
     AadhaarLast4,
     AccountId,
     AmountCandidates,
+    CardCandidates,
     IdentityCandidates,
     IdentityDate,
     NumericAmount,
@@ -430,3 +431,259 @@ def parse_amount_input(
     if has_context:
         return AmountCandidates(invalid=True)
     return AmountCandidates()
+
+
+# Card parsing is intentionally label-aware.  This prevents account IDs,
+# dates, pincodes, and amounts in an earlier turn from being mistaken for
+# payment credentials while still allowing a complete card turn in prose.
+_CARD_NUMBER_LABEL_PATTERN = re.compile(
+    r"\b(?:card\s*(?:number|no\.?|#)|number\s+on\s+card)\b\s*"
+    r"(?:is|:|-)?\s*(?P<value>[0-9][0-9\s-]*)",
+    re.IGNORECASE,
+)
+_RAW_CARD_NUMBER_PATTERN = re.compile(
+    r"(?<!\d)(?:\d[\s-]*){12,19}(?!\d)"
+)
+_CARDHOLDER_LABEL_PATTERN = re.compile(
+    r"\b(?:cardholder(?:\s+name)?|name\s+on\s+card)\b\s*"
+    r"(?:is|:|-)?\s*(?P<value>.*?)"
+    r"(?=\s*(?:[,;]|\b(?:card\s*(?:number|no\.?|#)|number\s+on\s+card|"
+    r"cvv|cvc|security\s+code|exp(?:iry|iration)?|expires?|valid\s*"
+    r"(?:thru|through))\b)|$)",
+    re.IGNORECASE,
+)
+_CARD_FIELD_LABEL_PATTERN = re.compile(
+    r"\b(?:card\s*(?:number|no\.?|#)|number\s+on\s+card|"
+    r"cardholder(?:\s+name)?|name\s+on\s+card|cvv|cvc|security\s+code|"
+    r"exp(?:iry|iration)?|expires?|valid\s*(?:thru|through))\b",
+    re.IGNORECASE,
+)
+_CVV_LABEL_PATTERN = re.compile(
+    r"\b(?:cvv|cvc|security\s+code)\b\s*(?:is|:|-)?\s*(?P<value>.*?)"
+    r"(?=\s*(?:[,;]|\b(?:card\s*(?:number|no\.?|#)|number\s+on\s+card|"
+    r"cardholder(?:\s+name)?|name\s+on\s+card|exp(?:iry|iration)?|expires?|"
+    r"valid\s*(?:thru|through))\b)|$)",
+    re.IGNORECASE,
+)
+_EXPIRY_LABEL_PATTERN = re.compile(
+    r"\b(?:exp(?:iry|iration)?|expires?|valid\s*(?:thru|through))\b",
+    re.IGNORECASE,
+)
+_EXPIRY_EXPRESSION_PATTERN = re.compile(
+    r"(?:"
+    r"\d{1,4}\s*[/\-]\s*\d{1,4}|"
+    r"\d{1,2}\s+\d{4}|"
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|"
+    r"jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|"
+    r"nov(?:ember)?|dec(?:ember)?)\s+\d{2,4}"
+    r")",
+    re.IGNORECASE,
+)
+_EXPIRY_MONTHS = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
+_DIGIT_WORDS = {
+    "zero": "0",
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
+}
+
+
+def normalize_card_number(value: str) -> str | None:
+    """Normalize and Luhn-validate a card number, or return ``None``."""
+
+    if not isinstance(value, str):
+        return None
+    normalized = re.sub(r"[\s-]", "", value)
+    if not normalized.isdigit() or not 12 <= len(normalized) <= 19:
+        return None
+    checksum = 0
+    doubled = False
+    for digit in reversed(normalized):
+        number = int(digit)
+        if doubled:
+            number *= 2
+            if number > 9:
+                number -= 9
+        checksum += number
+        doubled = not doubled
+    return normalized if checksum % 10 == 0 else None
+
+
+def _parse_spoken_cvv(value: str) -> str | None:
+    compact = value.strip().lower()
+    if re.fullmatch(r"[0-9](?:[\s-]*[0-9])*", compact):
+        digits = re.sub(r"\D", "", compact)
+    else:
+        words = re.findall(r"[a-z]+", compact)
+        if not words or any(word not in _DIGIT_WORDS for word in words):
+            return None
+        digits = "".join(_DIGIT_WORDS[word] for word in words)
+    return digits if len(digits) in {3, 4} else None
+
+
+def _parse_expiry_expression(expression: str) -> tuple[int, int] | None:
+    value = re.sub(r"\s+", " ", expression.strip().lower())
+    month: int
+    year: int
+    named = re.fullmatch(
+        r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|"
+        r"jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|"
+        r"nov(?:ember)?|dec(?:ember)?)\s+(\d{2,4})",
+        value,
+    )
+    if named:
+        month = _EXPIRY_MONTHS[named.group(1)]
+        year = int(named.group(2))
+    else:
+        numeric = re.fullmatch(r"(\d{1,4})\s*[/\-]\s*(\d{1,4})", value)
+        if not numeric:
+            numeric = re.fullmatch(r"(\d{1,2})\s+(\d{4})", value)
+        if not numeric:
+            return None
+        first, second = (int(part) for part in numeric.groups())
+        if first >= 1000:
+            year, month = first, second
+        else:
+            month, year = first, second
+
+    if year < 100:
+        year += 2000
+    if month not in range(1, 13) or year < 2000:
+        return None
+    today = date.today()
+    if (year, month) < (today.year, today.month):
+        return None
+    return month, year
+
+
+def parse_card_input(user_input: str) -> CardCandidates:
+    """Extract card fields and mark malformed supplied fields as invalid."""
+
+    if not isinstance(user_input, str) or not user_input.strip():
+        return CardCandidates()
+
+    value = user_input.strip()
+    card_number: str | None = None
+    invalid_card_number = False
+    card_match = _CARD_NUMBER_LABEL_PATTERN.search(value)
+    if card_match:
+        raw_card_number = card_match.group("value").strip()
+        # A label can be followed by another label with no value.
+        raw_card_number = _CARD_FIELD_LABEL_PATTERN.split(raw_card_number, 1)[0]
+        card_number = normalize_card_number(raw_card_number)
+        invalid_card_number = card_number is None
+    else:
+        raw_card_match = _RAW_CARD_NUMBER_PATTERN.search(value)
+        if raw_card_match:
+            raw_card_number = raw_card_match.group(0)
+            card_number = normalize_card_number(raw_card_number)
+            invalid_card_number = card_number is None
+    if card_match is None and re.search(
+        r"\b(?:card\s*(?:number|no\.?|#)|number\s+on\s+card)\b",
+        value,
+        re.IGNORECASE,
+    ):
+        invalid_card_number = True
+
+    cardholder_name: str | None = None
+    invalid_cardholder_name = False
+    cardholder_match = _CARDHOLDER_LABEL_PATTERN.search(value)
+    if cardholder_match:
+        candidate = clean_name(cardholder_match.group("value"))
+        if candidate and re.search(r"[A-Za-z]", candidate):
+            cardholder_name = candidate
+        else:
+            invalid_cardholder_name = True
+    elif not card_match and not _EXPIRY_LABEL_PATTERN.search(value) and not re.search(
+        r"\b(?:cvv|cvc|security\s+code)\b", value, re.IGNORECASE
+    ) and not _RAW_CARD_NUMBER_PATTERN.search(value) and _parse_spoken_cvv(value) is None:
+        # A plain name is useful when the agent asks for only the cardholder
+        # name.  It must contain letters and must not be another field value.
+        candidate = clean_name(value)
+        if re.search(r"[A-Za-z]", candidate):
+            cardholder_name = candidate
+
+    cvv: str | None = None
+    invalid_cvv = False
+    cvv_match = _CVV_LABEL_PATTERN.search(value)
+    if cvv_match:
+        cvv = _parse_spoken_cvv(cvv_match.group("value"))
+        invalid_cvv = cvv is None
+    elif re.fullmatch(r"\s*(?:[0-9](?:[\s-]*[0-9])*)\s*", value):
+        cvv = _parse_spoken_cvv(value)
+    elif re.fullmatch(
+        r"\s*(?:[a-z]+(?:[\s-]+[a-z]+){2,3})\s*", value, re.IGNORECASE
+    ):
+        cvv = _parse_spoken_cvv(value)
+
+    expiry_month: int | None = None
+    expiry_year: int | None = None
+    invalid_expiry = False
+    expiry_label = _EXPIRY_LABEL_PATTERN.search(value)
+    expiry_match = None
+    if expiry_label:
+        expiry_match = _EXPIRY_EXPRESSION_PATTERN.search(value, expiry_label.end())
+    else:
+        # An unlabelled month/year is allowed, but hyphenated card-number
+        # groups (for example 4532-0151) are not expiry expressions.
+        card_spans = [
+            (match.start(), match.end())
+            for match in _RAW_CARD_NUMBER_PATTERN.finditer(value)
+        ]
+        for match in _EXPIRY_EXPRESSION_PATTERN.finditer(value):
+            if not any(
+                match.start() < end and match.end() > start
+                for start, end in card_spans
+            ):
+                expiry_match = match
+                break
+    if expiry_match:
+        parsed_expiry = _parse_expiry_expression(expiry_match.group(0))
+        if parsed_expiry is None:
+            invalid_expiry = True
+        else:
+            expiry_month, expiry_year = parsed_expiry
+    elif expiry_label:
+        invalid_expiry = True
+
+    return CardCandidates(
+        cardholder_name=cardholder_name,
+        card_number=card_number,
+        cvv=cvv,
+        expiry_month=expiry_month,
+        expiry_year=expiry_year,
+        invalid_cardholder_name=invalid_cardholder_name,
+        invalid_card_number=invalid_card_number,
+        invalid_cvv=invalid_cvv,
+        invalid_expiry=invalid_expiry,
+    )

@@ -107,6 +107,27 @@ class AmountCandidates(BaseModel):
     invalid: bool = False
 
 
+class CardCandidates(BaseModel):
+    """Card fields recovered from one payment-details turn.
+
+    A missing value is deliberately different from an invalid value.  The
+    agent uses the latter to ask for a correction while retaining any other
+    valid fields already collected.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    cardholder_name: str | None = None
+    card_number: str | None = None
+    cvv: str | None = None
+    expiry_month: int | None = None
+    expiry_year: int | None = None
+    invalid_cardholder_name: bool = False
+    invalid_card_number: bool = False
+    invalid_cvv: bool = False
+    invalid_expiry: bool = False
+
+
 class NumericAmount(BaseModel):
     """A syntactically valid positive or negative amount with cent precision."""
 
@@ -239,6 +260,18 @@ class PaymentCard(BaseModel):
         normalized = value.replace(" ", "").replace("-", "")
         if not normalized.isdigit() or not 12 <= len(normalized) <= 19:
             raise ValueError("card number must contain 12 to 19 digits")
+        checksum = 0
+        doubled = False
+        for digit in reversed(normalized):
+            value_digit = int(digit)
+            if doubled:
+                value_digit *= 2
+                if value_digit > 9:
+                    value_digit -= 9
+            checksum += value_digit
+            doubled = not doubled
+        if checksum % 10:
+            raise ValueError("card number failed checksum validation")
         return normalized
 
     @field_validator("cvv")

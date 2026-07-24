@@ -13,11 +13,12 @@ from api_client import (
     ApiClient,
     LookupStatus,
 )
-from models import AccountRecord, ValidatedPaymentAmount
+from models import AccountRecord, PaymentCard, ValidatedPaymentAmount
 from parsers import (
     contains_account_reference,
     extract_account_ids,
     parse_amount_input,
+    parse_card_input,
     parse_identity_input,
 )
 
@@ -29,6 +30,7 @@ class _ConversationState(Enum):
     NEED_FULL_NAME = auto()
     VERIFIED_NEED_AMOUNT = auto()
     AMOUNT_COLLECTED = auto()
+    CARD_DETAILS_COLLECTED = auto()
     CLOSED_FAILURE = auto()
 
 
@@ -60,6 +62,10 @@ class Agent:
         "outstanding balance, and with no more than two decimal places."
     )
     _AMOUNT_ACCEPTED_MESSAGE = "Your payment amount has been recorded."
+    _CARD_DETAILS_PROMPT = (
+        "Please provide your cardholder name, card number, CVV, and expiry date."
+    )
+    _CARD_DETAILS_ACCEPTED_MESSAGE = "Your card details have been recorded."
     _ZERO_BALANCE_MESSAGE = (
         "Your outstanding balance is ₹0.00. There is no payment amount to collect."
     )
@@ -129,6 +135,15 @@ class Agent:
         self._amount: Decimal | None = None
         self._full_balance_pending = False
         self._invalid_amount_pending = False
+        self._cardholder_name: str | None = None
+        self._card_number: str | None = None
+        self._cvv: str | None = None
+        self._expiry_month: int | None = None
+        self._expiry_year: int | None = None
+        self._invalid_cardholder_name = False
+        self._invalid_card_number = False
+        self._invalid_cvv = False
+        self._invalid_expiry = False
         self._lookup_client = (
             lookup_client
             if lookup_client is not None
@@ -153,7 +168,9 @@ class Agent:
             if self._state is _ConversationState.VERIFIED_NEED_AMOUNT:
                 return {"message": self._amount_collection_message()}
             if self._state is _ConversationState.AMOUNT_COLLECTED:
-                return {"message": self._AMOUNT_ACCEPTED_MESSAGE}
+                return {"message": self._card_collection_message()}
+            if self._state is _ConversationState.CARD_DETAILS_COLLECTED:
+                return {"message": self._CARD_DETAILS_ACCEPTED_MESSAGE}
             return {"message": self._FULL_NAME_PROMPT}
 
         account_ids = extract_account_ids(user_input)
@@ -177,7 +194,10 @@ class Agent:
             return self._handle_amount_turn()
 
         if self._state is _ConversationState.AMOUNT_COLLECTED:
-            return {"message": self._AMOUNT_ACCEPTED_MESSAGE}
+            return self._handle_card_turn(user_input)
+
+        if self._state is _ConversationState.CARD_DETAILS_COLLECTED:
+            return {"message": self._CARD_DETAILS_ACCEPTED_MESSAGE}
 
         if len(account_ids) == 1:
             account_id = account_ids[0]
@@ -345,6 +365,18 @@ class Agent:
         self._amount = None
         self._full_balance_pending = False
         self._invalid_amount_pending = False
+        self._reset_card_context()
+
+    def _reset_card_context(self) -> None:
+        self._cardholder_name = None
+        self._card_number = None
+        self._cvv = None
+        self._expiry_month = None
+        self._expiry_year = None
+        self._invalid_cardholder_name = False
+        self._invalid_card_number = False
+        self._invalid_cvv = False
+        self._invalid_expiry = False
 
     def _capture_amount_input(
         self, user_input: str, *, allow_plain_number: bool = False
@@ -441,6 +473,110 @@ class Agent:
         self._invalid_amount_pending = False
         self._state = _ConversationState.AMOUNT_COLLECTED
         return {"message": self._AMOUNT_ACCEPTED_MESSAGE}
+
+    def _handle_card_turn(self, user_input: str) -> dict[str, str]:
+        """Merge card fields from this turn and advance only when complete."""
+
+        candidates = parse_card_input(user_input)
+        if candidates.cardholder_name is not None:
+            self._cardholder_name = candidates.cardholder_name
+            self._invalid_cardholder_name = False
+        elif candidates.invalid_cardholder_name:
+            self._cardholder_name = None
+            self._invalid_cardholder_name = True
+
+        if candidates.card_number is not None:
+            self._card_number = candidates.card_number
+            self._invalid_card_number = False
+        elif candidates.invalid_card_number:
+            self._card_number = None
+            self._invalid_card_number = True
+
+        if candidates.cvv is not None:
+            self._cvv = candidates.cvv
+            self._invalid_cvv = False
+        elif candidates.invalid_cvv:
+            self._cvv = None
+            self._invalid_cvv = True
+
+        if candidates.expiry_month is not None and candidates.expiry_year is not None:
+            self._expiry_month = candidates.expiry_month
+            self._expiry_year = candidates.expiry_year
+            self._invalid_expiry = False
+        elif candidates.invalid_expiry:
+            self._expiry_month = None
+            self._expiry_year = None
+            self._invalid_expiry = True
+
+        if not self._card_fields_complete():
+            return {"message": self._card_collection_message()}
+
+        # Keep malformed values out of the eventual payment stage without
+        # exposing validation details to the caller.
+        try:
+            PaymentCard(
+                cardholder_name=self._cardholder_name,
+                card_number=self._card_number,
+                cvv=self._cvv,
+                expiry_month=self._expiry_month,
+                expiry_year=self._expiry_year,
+            )
+        except ValidationError:
+            self._invalid_card_number = True
+            return {"message": self._card_collection_message()}
+
+        self._state = _ConversationState.CARD_DETAILS_COLLECTED
+        return {"message": self._CARD_DETAILS_ACCEPTED_MESSAGE}
+
+    def _card_fields_complete(self) -> bool:
+        return (
+            self._cardholder_name is not None
+            and self._card_number is not None
+            and self._cvv is not None
+            and self._expiry_month is not None
+            and self._expiry_year is not None
+            and not any(
+                (
+                    self._invalid_cardholder_name,
+                    self._invalid_card_number,
+                    self._invalid_cvv,
+                    self._invalid_expiry,
+                )
+            )
+        )
+
+    def _card_collection_message(self) -> str:
+        missing: list[str] = []
+        if self._cardholder_name is None or self._invalid_cardholder_name:
+            missing.append("cardholder name")
+        if self._card_number is None or self._invalid_card_number:
+            missing.append("card number")
+        if self._cvv is None or self._invalid_cvv:
+            missing.append("CVV")
+        if (
+            self._expiry_month is None
+            or self._expiry_year is None
+            or self._invalid_expiry
+        ):
+            missing.append("expiry date")
+        if not missing:
+            return self._CARD_DETAILS_ACCEPTED_MESSAGE
+        if len(missing) == 4 and not any(
+            (
+                self._invalid_cardholder_name,
+                self._invalid_card_number,
+                self._invalid_cvv,
+                self._invalid_expiry,
+            )
+        ):
+            return self._CARD_DETAILS_PROMPT
+        if len(missing) == 1:
+            return f"Please provide a valid {missing[0]}."
+        if len(missing) == 2:
+            requested = f"{missing[0]} and {missing[1]}"
+        else:
+            requested = ", ".join(missing[:-1]) + f", and {missing[-1]}"
+        return f"Please provide valid {requested}."
 
     def _perform_lookup(self, account_id: str) -> AccountLookupResult:
         try:

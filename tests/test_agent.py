@@ -1,6 +1,7 @@
 import unittest
 import socket
 import urllib.error
+from datetime import date
 
 from api_client import AccountLookupResult, ApiClient, LookupStatus, PaymentStatus
 from agent import Agent
@@ -299,6 +300,7 @@ class AmountCollectionTests(unittest.TestCase):
         self.assertEqual(agent._amount, 1250.75)
         self.assertEqual(client.payment_calls, [])
 
+
     def test_invalid_zero_negative_precision_and_over_balance_amounts_are_local(self) -> None:
         for value in ("0", "-1", "500.123", "1250.76"):
             with self.subTest(value=value):
@@ -330,6 +332,78 @@ class AmountCollectionTests(unittest.TestCase):
         response = agent.next("100")
 
         self.assertEqual(response, {"message": Agent._AMOUNT_CORRECTION_PROMPT})
+        self.assertEqual(client.payment_calls, [])
+
+
+class CardCollectionTests(unittest.TestCase):
+    def _amount_collected_agent(self):
+        client = FakeLookupClient(
+            {
+                "account_id": "ACC1001",
+                "full_name": "Nithin Jain",
+                "dob": "1990-05-14",
+                "balance": 1250.75,
+            }
+        )
+        agent = Agent(client)
+        for turn in ("ACC1001", "Nithin Jain", "DOB 1990-05-14", "500"):
+            agent.next(turn)
+        return agent, client
+
+    def test_complete_card_can_be_collected_in_one_turn(self) -> None:
+        agent, client = self._amount_collected_agent()
+        future_year = date.today().year + 1
+
+        response = agent.next(
+            f"cardholder name: Someone Else, card number: 4532 0151 1283 0366, "
+            f"CVV: one two three, expiry: December {future_year}"
+        )
+
+        self.assertEqual(
+            response, {"message": Agent._CARD_DETAILS_ACCEPTED_MESSAGE}
+        )
+        self.assertEqual(agent._cardholder_name, "Someone Else")
+        self.assertEqual(agent._card_number, "4532015112830366")
+        self.assertEqual(agent._cvv, "123")
+        self.assertEqual(agent._expiry_month, 12)
+        self.assertEqual(agent._expiry_year, future_year)
+        self.assertEqual(client.payment_calls, [])
+
+    def test_partial_card_fields_are_retained_and_only_missing_fields_are_requested(
+        self,
+    ) -> None:
+        agent, client = self._amount_collected_agent()
+
+        first = agent.next(
+            "cardholder name: Someone Else; card number 4532-0151-1283-0366"
+        )
+        self.assertIn("CVV", first["message"])
+        self.assertIn("expiry date", first["message"])
+        self.assertNotIn("cardholder", first["message"])
+        self.assertNotIn("card number", first["message"])
+
+        second = agent.next("expiry 12/27")
+        self.assertEqual(second, {"message": "Please provide a valid CVV."})
+
+        response = agent.next("one two three")
+        self.assertEqual(
+            response, {"message": Agent._CARD_DETAILS_ACCEPTED_MESSAGE}
+        )
+        self.assertEqual(client.payment_calls, [])
+
+    def test_invalid_card_data_is_rejected_locally_without_echoing_secrets(self) -> None:
+        agent, client = self._amount_collected_agent()
+
+        response = agent.next(
+            "cardholder name: Someone Else, card number: 4111 1111 1111 1112, "
+            "CVV: 12, expiry: 01/25"
+        )
+
+        self.assertIn("card number", response["message"])
+        self.assertIn("CVV", response["message"])
+        self.assertIn("expiry date", response["message"])
+        self.assertNotIn("4111111111111112", response["message"])
+        self.assertNotIn("12", response["message"])
         self.assertEqual(client.payment_calls, [])
 
 

@@ -76,17 +76,17 @@ These tickets are ordered in dependency order. Each ticket declares its blocking
 
 **Blocked by:** 04 — Disclose Balance and Collect Valid Payment Amounts.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Card number, expiry, CVV, and cardholder name can be supplied in one turn or across multiple turns.
-- [ ] Card numbers are normalized by removing spaces and hyphens before validation.
-- [ ] Invalid length or failed Luhn card numbers are rejected before any payment call.
-- [ ] Expiry supports numeric and natural-language month/year forms and rejects expired or malformed dates.
-- [ ] CVV accepts three or four digits, including clearly spoken digit sequences.
-- [ ] Cardholder name is required but is not compared to the account holder.
-- [ ] Valid partial card fields are retained and not re-requested.
-- [ ] User-facing card prompts never echo the full card number or CVV.
-- [ ] Tests prove invalid local card data produces no payment API call.
+- [x] Card number, expiry, CVV, and cardholder name can be supplied in one turn or across multiple turns.
+- [x] Card numbers are normalized by removing spaces and hyphens before validation.
+- [x] Invalid length or failed Luhn card numbers are rejected before any payment call.
+- [x] Expiry supports numeric and natural-language month/year forms and rejects expired or malformed dates.
+- [x] CVV accepts three or four digits, including clearly spoken digit sequences.
+- [x] Cardholder name is required but is not compared to the account holder.
+- [x] Valid partial card fields are retained and not re-requested.
+- [x] User-facing card prompts never echo the full card number or CVV.
+- [x] Tests prove invalid local card data produces no payment API call.
 
 ## 06 — Process Successful Payments and Close Safely
 
