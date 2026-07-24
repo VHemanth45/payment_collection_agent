@@ -4,49 +4,16 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import Any, TextIO
+from typing import TextIO
 
 from agent import Agent
 from api_client import ApiClient
 
 
-class DemoApiClient:
-    """Small local service used by the CLI's safe default demo mode."""
+def build_agent() -> Agent:
+    """Build the conversational CLI agent backed by the supplied HTTP API."""
 
-    _ACCOUNTS = {
-        "ACC1001": {
-            "account_id": "ACC1001",
-            "full_name": "Nithin Jain",
-            "dob": "1990-05-14",
-            "aadhaar_last4": "4321",
-            "pincode": "400001",
-            "balance": "1250.75",
-        },
-        "ACC2002": {
-            "account_id": "ACC2002",
-            "full_name": "Demo Customer",
-            "dob": "2000-02-29",
-            "aadhaar_last4": "9876",
-            "pincode": "560001",
-            "balance": "0.00",
-        },
-    }
-
-    def lookup_account(self, account_id: str) -> dict[str, Any] | None:
-        account = self._ACCOUNTS.get(account_id)
-        return dict(account) if account is not None else None
-
-    def process_payment(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Return a deterministic demo transaction without displaying card data."""
-
-        del payload
-        return {"success": True, "transaction_id": "demo-txn-001"}
-
-
-def build_agent(*, live: bool = False) -> Agent:
-    """Build the CLI agent using either the local demo or the live API adapter."""
-
-    return Agent(api_client=ApiClient() if live else DemoApiClient())
+    return Agent(api_client=ApiClient())
 
 
 def run_cli(
@@ -83,17 +50,6 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run an interactive payment-collection conversation."
     )
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument(
-        "--demo",
-        action="store_true",
-        help="use deterministic local demo accounts (the default)",
-    )
-    mode.add_argument(
-        "--live",
-        action="store_true",
-        help="use the configured live payment API; see README prerequisites",
-    )
     parser.add_argument(
         "--no-banner",
         action="store_true",
@@ -114,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
 
         return evaluation_main([])
     return run_cli(
-        build_agent(live=args.live),
+        build_agent(),
         show_banner=not args.no_banner,
     )
 

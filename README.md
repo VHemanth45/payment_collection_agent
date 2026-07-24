@@ -21,8 +21,9 @@ python -m pip install 'pydantic>=2,<3'
 
 ## Run the CLI
 
-The default CLI uses deterministic local demo accounts and never calls the
-network:
+The CLI is backed by the supplied HTTP API. It calls `/api/lookup-account` only
+after a valid account ID and calls `/api/process-payment` only after strict
+verification, amount validation, and card validation succeed:
 
 ```bash
 python main.py
@@ -30,7 +31,17 @@ python main.py
 payment-collection-agent
 ```
 
-Try this demo conversation (the expiry year can be any future year):
+Try this sample conversation (the expiry year can be any future year):
+
+```text
+You: account id ACC1002
+You: Rajarajeswari Balasubramaniam
+You: DOB 1985-11-23
+You: 100
+You: cardholder name: Rajarajeswari Balasubramaniam, card number: 4532 0151 1283 0366, CVV: 123, expiry: 12/2027
+```
+
+Another sample conversation is:
 
 ```text
 You: account id ACC1001
@@ -40,16 +51,10 @@ You: pay the outstanding balance
 You: cardholder name: Demo Cardholder, card number: 4532 0151 1283 0366, CVV: 123, expiry: 12/2027
 ```
 
-Use `:quit` to leave. `ACC2002` is a zero-balance demo account. To use the
-live HTTP adapter instead, run:
-
-```bash
-python main.py --live
-```
-
-Live smoke tests require network access to the configured service, valid
-service availability, and a non-sensitive test account/card approved for that
-environment. No live smoke test is run by the local test suite.
+Use `:quit` to leave. The CLI requires network access to the configured
+service and a valid test account/card approved for that environment. No live
+smoke test is run by the local test suite; the evaluation runner uses injected
+test clients instead.
 
 ## Testing and evaluation
 

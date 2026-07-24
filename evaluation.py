@@ -7,7 +7,6 @@ from typing import Any
 
 from agent import Agent
 from api_client import PaymentResult, PaymentStatus
-from main import DemoApiClient
 from messages import AMOUNT_PROMPT
 from redaction import redact_for_report
 
@@ -18,8 +17,43 @@ CARD_TURN = (
 )
 
 
-class EvaluationClient(DemoApiClient):
+class EvaluationClient:
     """Demo service with observable, test-only call traces and result overrides."""
+
+    _ACCOUNTS = {
+        "ACC1001": {
+            "account_id": "ACC1001",
+            "full_name": "Nithin Jain",
+            "dob": "1990-05-14",
+            "aadhaar_last4": "4321",
+            "pincode": "400001",
+            "balance": "1250.75",
+        },
+        "ACC1002": {
+            "account_id": "ACC1002",
+            "full_name": "Rajarajeswari Balasubramaniam",
+            "dob": "1985-11-23",
+            "aadhaar_last4": "9876",
+            "pincode": "400002",
+            "balance": "540.00",
+        },
+        "ACC1003": {
+            "account_id": "ACC1003",
+            "full_name": "Priya Agarwal",
+            "dob": "1992-08-10",
+            "aadhaar_last4": "2468",
+            "pincode": "400003",
+            "balance": "0.00",
+        },
+        "ACC1004": {
+            "account_id": "ACC1004",
+            "full_name": "Rahul Mehta",
+            "dob": "1988-02-29",
+            "aadhaar_last4": "1357",
+            "pincode": "400004",
+            "balance": "3200.50",
+        },
+    }
 
     def __init__(self, payment_results: list[Any] | None = None) -> None:
         self.lookup_calls: list[str] = []
@@ -28,13 +62,14 @@ class EvaluationClient(DemoApiClient):
 
     def lookup_account(self, account_id: str) -> dict[str, Any] | None:
         self.lookup_calls.append(account_id)
-        return super().lookup_account(account_id)
+        account = self._ACCOUNTS.get(account_id)
+        return dict(account) if account is not None else None
 
     def process_payment(self, payload: dict[str, Any]) -> Any:
         self.payment_calls.append(payload)
         if self.payment_results:
             return self.payment_results.pop(0)
-        return super().process_payment(payload)
+        return {"success": True, "transaction_id": "demo-txn-001"}
 
 
 def _complete_verified_agent(client: EvaluationClient) -> Agent:

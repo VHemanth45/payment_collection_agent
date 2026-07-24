@@ -186,9 +186,9 @@ class EndToEndTests(unittest.TestCase):
     def test_zero_balance_and_leap_day_dob_are_handled_without_unsafe_payment(self):
         zero_client = EvaluationClient()
         zero_agent = Agent(zero_client)
-        zero_agent.next("ACC2002")
-        zero_agent.next("Demo Customer")
-        zero_response = zero_agent.next("DOB February 29, 2000")
+        zero_agent.next("ACC1003")
+        zero_agent.next("Priya Agarwal")
+        zero_response = zero_agent.next("DOB 1992-08-10")
         zero_follow_up = zero_agent.next("100")
 
         self.assertIn("₹0.00", zero_response["message"])
@@ -198,10 +198,10 @@ class EndToEndTests(unittest.TestCase):
 
         leap_client = EvaluationClient()
         leap_agent = Agent(leap_client)
-        leap_agent.next("ACC2002")
-        leap_agent.next("Demo Customer")
-        leap_response = leap_agent.next("DOB 2000-02-29")
-        self.assertIn("₹0.00", leap_response["message"])
+        leap_agent.next("ACC1004")
+        leap_agent.next("Rahul Mehta")
+        leap_response = leap_agent.next("DOB 1988-02-29")
+        self.assertIn("₹3200.50", leap_response["message"])
 
     def test_repeated_completion_blank_noisy_and_ambiguous_inputs_are_deterministic(self):
         client = EvaluationClient()

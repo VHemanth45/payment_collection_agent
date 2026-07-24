@@ -675,6 +675,32 @@ def parse_card_input(user_input: str) -> CardCandidates:
     ):
         cvv = _parse_spoken_cvv(value)
 
+    # Also accept the natural positional form commonly used in the CLI:
+    # ``Name, card-number, CVV, MM/YYYY``.  Labeled fields remain the primary
+    # path; this fallback only runs when a card number is present and fills
+    # fields that were not already extracted by a label.
+    positional_parts = [
+        part.strip() for part in re.split(r"[,;]", value) if part.strip()
+    ]
+    if card_number is not None and len(positional_parts) > 1:
+        for part in positional_parts:
+            if normalize_card_number(part) == card_number:
+                continue
+            if cardholder_name is None and re.search(r"[A-Za-z]", part):
+                if not re.search(
+                    r"\b(?:cardholder|card\s*(?:number|no\.?|#)|number\s+on\s+card|"
+                    r"cvv|cvc|security\s+code|exp(?:iry|iration)?|expires?|"
+                    r"valid\s*(?:thru|through))\b",
+                    part,
+                    re.IGNORECASE,
+                ):
+                    cardholder_name = clean_name(part)
+            if cvv is None:
+                positional_cvv = _parse_spoken_cvv(part)
+                if positional_cvv is not None:
+                    cvv = positional_cvv
+                    invalid_cvv = False
+
     expiry_month: int | None = None
     expiry_year: int | None = None
     invalid_expiry = False
