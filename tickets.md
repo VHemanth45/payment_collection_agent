@@ -24,15 +24,15 @@ These tickets are ordered in dependency order. Each ticket declares its blocking
 
 **Blocked by:** 01 — Establish the Agent Contract and Deterministic Conversation Shell.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Account IDs such as `ACC1001`, `acc 1001`, and labeled account phrases are normalized to the accepted canonical form.
-- [ ] Malformed or ambiguous account IDs are rejected locally with an ACC-style correction prompt and no lookup call.
-- [ ] A valid account ID triggers exactly one lookup call per accepted account ID.
-- [ ] Unknown account responses ask the user to check and resend the account ID.
-- [ ] Lookup timeout, connection, and malformed-response outcomes produce safe deterministic messages and no verification/payment progression.
-- [ ] Supplying a different account ID before verification replaces the pending account and performs a new lookup.
-- [ ] Tests assert both required lookup calls and forbidden payment calls.
+- [x] Account IDs such as `ACC1001`, `acc 1001`, and labeled account phrases are normalized to the accepted canonical form.
+- [x] Malformed or ambiguous account IDs are rejected locally with an ACC-style correction prompt and no lookup call.
+- [x] A valid account ID triggers exactly one lookup call per accepted account ID.
+- [x] Unknown account responses ask the user to check and resend the account ID.
+- [x] Lookup timeout, connection, and malformed-response outcomes produce safe deterministic messages and no verification/payment progression.
+- [x] Supplying a different account ID before verification replaces the pending account and performs a new lookup.
+- [x] Tests assert both required lookup calls and forbidden payment calls.
 
 ## 03 — Implement Strict Identity Verification and Lockout
 
