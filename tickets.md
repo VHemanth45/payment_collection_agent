@@ -94,15 +94,15 @@ These tickets are ordered in dependency order. Each ticket declares its blocking
 
 **Blocked by:** 05 — Collect and Validate Complete Card Details.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] The payment API is called only after account lookup, verification, amount validation, and complete card validation succeed.
-- [ ] The payment payload contains the normalized account ID, two-decimal amount, cardholder name, card number, expiry, and CVV expected by the API contract.
-- [ ] A successful payment response reports the transaction ID.
-- [ ] The final recap includes account ID, amount, and status without identity or card secrets.
-- [ ] Card number, CVV, expiry, and cardholder name are cleared from agent state after the payment attempt.
-- [ ] Repeated user messages after completion do not trigger another payment call.
-- [ ] The agent does not claim that the server-side balance changed beyond reporting the successful transaction.
+- [x] The payment API is called only after account lookup, verification, amount validation, and complete card validation succeed.
+- [x] The payment payload contains the normalized account ID, two-decimal amount, cardholder name, card number, expiry, and CVV expected by the API contract.
+- [x] A successful payment response reports the transaction ID.
+- [x] The final recap includes account ID, amount, and status without identity or card secrets.
+- [x] Card number, CVV, expiry, and cardholder name are cleared from agent state after the payment attempt.
+- [x] Repeated user messages after completion do not trigger another payment call.
+- [x] The agent does not claim that the server-side balance changed beyond reporting the successful transaction.
 
 ## 07 — Handle Recoverable and Terminal Payment Failures
 

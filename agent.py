@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from enum import Enum, auto
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import inspect
 from typing import Any, Callable, Mapping
 
 from pydantic import ValidationError
@@ -12,6 +13,8 @@ from api_client import (
     AccountLookupResult,
     ApiClient,
     LookupStatus,
+    PaymentResult,
+    PaymentStatus,
 )
 from models import AccountRecord, PaymentCard, ValidatedPaymentAmount
 from parsers import (
@@ -31,6 +34,8 @@ class _ConversationState(Enum):
     VERIFIED_NEED_AMOUNT = auto()
     AMOUNT_COLLECTED = auto()
     CARD_DETAILS_COLLECTED = auto()
+    PAYMENT_COMPLETE = auto()
+    PAYMENT_FAILED = auto()
     CLOSED_FAILURE = auto()
 
 
@@ -66,6 +71,9 @@ class Agent:
         "Please provide your cardholder name, card number, CVV, and expiry date."
     )
     _CARD_DETAILS_ACCEPTED_MESSAGE = "Your card details have been recorded."
+    _PAYMENT_FAILURE_MESSAGE = (
+        "I couldn't complete the payment. Please try again later."
+    )
     _ZERO_BALANCE_MESSAGE = (
         "Your outstanding balance is ₹0.00. There is no payment amount to collect."
     )
@@ -144,6 +152,8 @@ class Agent:
         self._invalid_card_number = False
         self._invalid_cvv = False
         self._invalid_expiry = False
+        self._payment_transaction_id: str | None = None
+        self._payment_result: PaymentStatus | None = None
         self._lookup_client = (
             lookup_client
             if lookup_client is not None
@@ -161,6 +171,10 @@ class Agent:
 
         if self._state is _ConversationState.CLOSED_FAILURE:
             return {"message": self._VERIFICATION_LOCKED_MESSAGE}
+        if self._state is _ConversationState.PAYMENT_COMPLETE:
+            return {"message": self._payment_success_message()}
+        if self._state is _ConversationState.PAYMENT_FAILED:
+            return {"message": self._PAYMENT_FAILURE_MESSAGE}
 
         if not isinstance(user_input, str) or not user_input.strip():
             if self._state is _ConversationState.NEED_ACCOUNT:
@@ -197,7 +211,7 @@ class Agent:
             return self._handle_card_turn(user_input)
 
         if self._state is _ConversationState.CARD_DETAILS_COLLECTED:
-            return {"message": self._CARD_DETAILS_ACCEPTED_MESSAGE}
+            return self._submit_payment()
 
         if len(account_ids) == 1:
             account_id = account_ids[0]
@@ -366,6 +380,8 @@ class Agent:
         self._full_balance_pending = False
         self._invalid_amount_pending = False
         self._reset_card_context()
+        self._payment_transaction_id = None
+        self._payment_result = None
 
     def _reset_card_context(self) -> None:
         self._cardholder_name = None
@@ -525,8 +541,108 @@ class Agent:
             self._invalid_card_number = True
             return {"message": self._card_collection_message()}
 
-        self._state = _ConversationState.CARD_DETAILS_COLLECTED
-        return {"message": self._CARD_DETAILS_ACCEPTED_MESSAGE}
+        return self._submit_payment()
+
+    def _submit_payment(self) -> dict[str, str]:
+        """Submit one validated payment and make the result idempotent."""
+
+        try:
+            payment_result = self._perform_payment()
+            if (
+                payment_result.status is PaymentStatus.SUCCESS
+                and isinstance(payment_result.transaction_id, str)
+                and payment_result.transaction_id.strip()
+            ):
+                self._payment_transaction_id = payment_result.transaction_id.strip()
+                self._payment_result = PaymentStatus.SUCCESS
+                self._state = _ConversationState.PAYMENT_COMPLETE
+                return {"message": self._payment_success_message()}
+
+            self._payment_result = payment_result.status
+            self._state = _ConversationState.PAYMENT_FAILED
+            return {"message": self._PAYMENT_FAILURE_MESSAGE}
+        except Exception:
+            self._payment_result = PaymentStatus.MALFORMED_RESPONSE
+            self._state = _ConversationState.PAYMENT_FAILED
+            return {"message": self._PAYMENT_FAILURE_MESSAGE}
+        finally:
+            # Raw card data must not survive the payment attempt, regardless
+            # of the transport or response outcome.
+            self._reset_card_context()
+
+    def _perform_payment(self) -> PaymentResult:
+        """Call an injected payment client using the documented card payload."""
+
+        if not isinstance(self._account_id, str) or self._amount is None:
+            return PaymentResult(status=PaymentStatus.MALFORMED_RESPONSE)
+
+        amount = self._amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        card = {
+            "cardholder_name": self._cardholder_name,
+            "card_number": self._card_number,
+            "cvv": self._cvv,
+            "expiry_month": self._expiry_month,
+            "expiry_year": self._expiry_year,
+        }
+        request_payload = {
+            "account_id": self._account_id,
+            "amount": amount,
+            "payment_method": {"type": "card", "card": card},
+        }
+
+        payment = getattr(self._lookup_client, "process_payment", None)
+        if not callable(payment):
+            return PaymentResult(status=PaymentStatus.MALFORMED_RESPONSE)
+
+        try:
+            # ApiClient exposes (account_id, amount, card), while lightweight
+            # injected test clients often accept the complete request payload.
+            # Inspecting the signature avoids retrying a charge after a
+            # TypeError from an already-invoked payment method.
+            try:
+                signature = inspect.signature(payment)
+                signature.bind(self._account_id, amount, card)
+            except (TypeError, ValueError):
+                raw_result = payment(request_payload)
+            else:
+                raw_result = payment(self._account_id, amount, card)
+        except Exception:
+            return PaymentResult(status=PaymentStatus.MALFORMED_RESPONSE)
+
+        return self._normalize_payment_result(raw_result)
+
+    @staticmethod
+    def _normalize_payment_result(raw_result: Any) -> PaymentResult:
+        if isinstance(raw_result, PaymentResult):
+            return raw_result
+        if isinstance(raw_result, Mapping):
+            transaction_id = raw_result.get("transaction_id")
+            if raw_result.get("success") is True:
+                return PaymentResult(
+                    status=PaymentStatus.SUCCESS,
+                    transaction_id=transaction_id
+                    if isinstance(transaction_id, str)
+                    else None,
+                )
+            status_value = raw_result.get("status") or raw_result.get("outcome")
+            if isinstance(status_value, PaymentStatus):
+                return PaymentResult(status=status_value)
+            if isinstance(status_value, str):
+                try:
+                    return PaymentResult(status=PaymentStatus(status_value))
+                except ValueError:
+                    pass
+        return PaymentResult(status=PaymentStatus.MALFORMED_RESPONSE)
+
+    def _payment_success_message(self) -> str:
+        transaction_id = self._payment_transaction_id or ""
+        account_id = self._account_id or ""
+        amount = self._amount or Decimal("0")
+        return (
+            f"Payment successful. Transaction ID: {transaction_id}. "
+            f"Account ID: {account_id}. Amount: {self._format_amount(amount)}. "
+            "Status: successful."
+        )
 
     def _card_fields_complete(self) -> bool:
         return (

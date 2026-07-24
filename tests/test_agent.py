@@ -2,6 +2,7 @@ import unittest
 import socket
 import urllib.error
 from datetime import date
+from decimal import Decimal
 
 from api_client import AccountLookupResult, ApiClient, LookupStatus, PaymentStatus
 from agent import Agent
@@ -62,6 +63,7 @@ class FakeLookupClient:
 
     def process_payment(self, payload):
         self.payment_calls.append(payload)
+        return {"success": True, "transaction_id": "txn_test"}
 
 
 class AccountLookupTests(unittest.TestCase):
@@ -359,15 +361,22 @@ class CardCollectionTests(unittest.TestCase):
             f"CVV: one two three, expiry: December {future_year}"
         )
 
+        self.assertIn("txn_test", response["message"])
+        self.assertIn("ACC1001", response["message"])
+        self.assertIn("₹500.00", response["message"])
+        payload = client.payment_calls[0]
+        self.assertEqual(payload["account_id"], "ACC1001")
+        self.assertEqual(payload["amount"].quantize(Decimal("0.01")), Decimal("500.00"))
         self.assertEqual(
-            response, {"message": Agent._CARD_DETAILS_ACCEPTED_MESSAGE}
+            payload["payment_method"]["card"]["card_number"],
+            "4532015112830366",
         )
-        self.assertEqual(agent._cardholder_name, "Someone Else")
-        self.assertEqual(agent._card_number, "4532015112830366")
-        self.assertEqual(agent._cvv, "123")
-        self.assertEqual(agent._expiry_month, 12)
-        self.assertEqual(agent._expiry_year, future_year)
-        self.assertEqual(client.payment_calls, [])
+        self.assertIsNone(agent._cardholder_name)
+        self.assertIsNone(agent._card_number)
+        self.assertIsNone(agent._cvv)
+        self.assertIsNone(agent._expiry_month)
+        self.assertIsNone(agent._expiry_year)
+        self.assertEqual(len(client.payment_calls), 1)
 
     def test_partial_card_fields_are_retained_and_only_missing_fields_are_requested(
         self,
@@ -386,10 +395,11 @@ class CardCollectionTests(unittest.TestCase):
         self.assertEqual(second, {"message": "Please provide a valid CVV."})
 
         response = agent.next("one two three")
-        self.assertEqual(
-            response, {"message": Agent._CARD_DETAILS_ACCEPTED_MESSAGE}
-        )
-        self.assertEqual(client.payment_calls, [])
+        self.assertIn("txn_test", response["message"])
+        self.assertEqual(len(client.payment_calls), 1)
+        repeat = agent.next("please pay again")
+        self.assertEqual(repeat, response)
+        self.assertEqual(len(client.payment_calls), 1)
 
     def test_invalid_card_data_is_rejected_locally_without_echoing_secrets(self) -> None:
         agent, client = self._amount_collected_agent()
@@ -405,6 +415,79 @@ class CardCollectionTests(unittest.TestCase):
         self.assertNotIn("4111111111111112", response["message"])
         self.assertNotIn("12", response["message"])
         self.assertEqual(client.payment_calls, [])
+
+
+class PaymentCompletionTests(unittest.TestCase):
+    def _amount_collected_agent(self, client):
+        agent = Agent(client)
+        for turn in ("ACC1001", "Nithin Jain", "DOB 1990-05-14", "500"):
+            agent.next(turn)
+        return agent
+
+    def test_three_argument_payment_client_receives_normalized_payload(self) -> None:
+        class ThreeArgumentClient:
+            def __init__(self):
+                self.lookup_calls = []
+                self.payment_calls = []
+
+            def lookup_account(self, account_id):
+                self.lookup_calls.append(account_id)
+                return {
+                    "account_id": "ACC1001",
+                    "full_name": "Nithin Jain",
+                    "dob": "1990-05-14",
+                    "balance": 1250.75,
+                }
+
+            def process_payment(self, account_id, amount, card):
+                self.payment_calls.append((account_id, amount, card))
+                return {"success": True, "transaction_id": "txn_3arg"}
+
+        client = ThreeArgumentClient()
+        agent = self._amount_collected_agent(client)
+
+        response = agent.next(
+            "cardholder name: Someone Else, card number: 4532-0151-1283-0366, "
+            "CVV: 123, expiry: 12/27"
+        )
+
+        self.assertIn("txn_3arg", response["message"])
+        self.assertEqual(len(client.payment_calls), 1)
+        account_id, amount, card = client.payment_calls[0]
+        self.assertEqual(account_id, "ACC1001")
+        self.assertEqual(amount, Decimal("500.00"))
+        self.assertEqual(card["card_number"], "4532015112830366")
+        self.assertEqual(card["expiry_month"], 12)
+        self.assertEqual(card["expiry_year"], 2027)
+
+    def test_card_fields_are_cleared_when_payment_client_raises(self) -> None:
+        class RaisingClient(FakeLookupClient):
+            def process_payment(self, payload):
+                self.payment_calls.append(payload)
+                raise RuntimeError("transport failed")
+
+        client = RaisingClient(
+            {
+                "account_id": "ACC1001",
+                "full_name": "Nithin Jain",
+                "dob": "1990-05-14",
+                "balance": 1250.75,
+            }
+        )
+        agent = self._amount_collected_agent(client)
+
+        response = agent.next(
+            "cardholder name: Someone Else, card number: 4532-0151-1283-0366, "
+            "CVV: 123, expiry: 12/27"
+        )
+
+        self.assertEqual(response, {"message": Agent._PAYMENT_FAILURE_MESSAGE})
+        self.assertEqual(len(client.payment_calls), 1)
+        self.assertIsNone(agent._cardholder_name)
+        self.assertIsNone(agent._card_number)
+        self.assertIsNone(agent._cvv)
+        self.assertIsNone(agent._expiry_month)
+        self.assertIsNone(agent._expiry_year)
 
 
 class ApiClientTests(unittest.TestCase):
