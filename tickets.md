@@ -59,16 +59,16 @@ These tickets are ordered in dependency order. Each ticket declares its blocking
 
 **Blocked by:** 03 — Implement Strict Identity Verification and Lockout.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Balance is disclosed only after successful verification.
-- [ ] Balance disclosure does not include stored DOB, Aadhaar last four, pincode, or other identity secrets.
-- [ ] Numeric amounts, comma-separated amounts, currency-symbol amounts, and common rupee wording are parsed into decimal values.
-- [ ] Full-balance phrases use the looked-up outstanding balance exactly.
-- [ ] Amounts are rejected if zero, negative, malformed, more than two decimal places, or greater than the outstanding balance.
-- [ ] Valid amount data supplied before the amount prompt is retained and not requested again after verification.
-- [ ] Invalid amount responses are deterministic and ask only for a corrected amount.
-- [ ] No payment API call occurs during amount collection.
+- [x] Balance is disclosed only after successful verification.
+- [x] Balance disclosure does not include stored DOB, Aadhaar last four, pincode, or other identity secrets.
+- [x] Numeric amounts, comma-separated amounts, currency-symbol amounts, and common rupee wording are parsed into decimal values.
+- [x] Full-balance phrases use the looked-up outstanding balance exactly.
+- [x] Amounts are rejected if zero, negative, malformed, more than two decimal places, or greater than the outstanding balance.
+- [x] Valid amount data supplied before the amount prompt is retained and not requested again after verification.
+- [x] Invalid amount responses are deterministic and ask only for a corrected amount.
+- [x] No payment API call occurs during amount collection.
 
 ## 05 — Collect and Validate Complete Card Details
 

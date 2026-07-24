@@ -155,15 +155,14 @@ class IdentityVerificationTests(unittest.TestCase):
         self.agent = Agent(self.client)
         self.agent.next("ACC1001")
 
-    def test_exact_name_and_one_secondary_factor_verify_without_balance_disclosure(
+    def test_exact_name_and_one_secondary_factor_discloses_only_balance(
         self,
     ) -> None:
         name_response = self.agent.next("Nithin   Jain")
         verified_response = self.agent.next("Date of birth: 14th May 1990")
 
         self.assertIn("verification detail", name_response["message"])
-        self.assertEqual(verified_response, {"message": Agent._VERIFIED_MESSAGE})
-        self.assertNotIn("1250.75", verified_response["message"])
+        self.assertIn("1250.75", verified_response["message"])
         self.assertNotIn("1990-05-14", verified_response["message"])
         self.assertNotIn("4321", verified_response["message"])
         self.assertNotIn("400001", verified_response["message"])
@@ -173,7 +172,7 @@ class IdentityVerificationTests(unittest.TestCase):
         verified_response = self.agent.next("full name: Nithin Jain")
 
         self.assertEqual(name_prompt, {"message": Agent._FULL_NAME_PROMPT})
-        self.assertEqual(verified_response, {"message": Agent._VERIFIED_MESSAGE})
+        self.assertIn("1250.75", verified_response["message"])
 
     def test_invalid_factor_before_name_remains_a_non_counting_correction(self) -> None:
         name_prompt = self.agent.next("DOB 1990-02-30")
@@ -184,7 +183,7 @@ class IdentityVerificationTests(unittest.TestCase):
         self.assertEqual(
             correction, {"message": Agent._INVALID_SECONDARY_FACTOR_PROMPT}
         )
-        self.assertEqual(verified_response, {"message": Agent._VERIFIED_MESSAGE})
+        self.assertIn("1250.75", verified_response["message"])
 
     def test_identity_fields_supplied_with_account_are_retained(self) -> None:
         client = FakeLookupClient(self.client.response)
@@ -195,7 +194,7 @@ class IdentityVerificationTests(unittest.TestCase):
             "and my DOB is 1990-05-14"
         )
 
-        self.assertEqual(response, {"message": Agent._VERIFIED_MESSAGE})
+        self.assertIn("1250.75", response["message"])
         self.assertEqual(client.calls, ["ACC1001"])
 
     def test_name_comparison_is_case_sensitive_and_failure_is_generic(self) -> None:
@@ -221,7 +220,7 @@ class IdentityVerificationTests(unittest.TestCase):
         self.assertEqual(
             ambiguous, {"message": Agent._INVALID_SECONDARY_FACTOR_PROMPT}
         )
-        self.assertEqual(verified, {"message": Agent._VERIFIED_MESSAGE})
+        self.assertIn("1250.75", verified["message"])
 
     def test_aadhaar_and_pincode_require_their_exact_lengths(self) -> None:
         self.agent.next("Nithin Jain")
@@ -230,7 +229,7 @@ class IdentityVerificationTests(unittest.TestCase):
         valid = self.agent.next("Aadhaar last four is 4321")
 
         self.assertEqual(invalid, {"message": Agent._INVALID_SECONDARY_FACTOR_PROMPT})
-        self.assertEqual(valid, {"message": Agent._VERIFIED_MESSAGE})
+        self.assertIn("1250.75", valid["message"])
 
     def test_three_complete_failures_lock_conversation_and_block_later_calls(self) -> None:
         for attempt in range(3):
@@ -245,6 +244,93 @@ class IdentityVerificationTests(unittest.TestCase):
             {"message": Agent._VERIFICATION_LOCKED_MESSAGE},
         )
         self.assertEqual(self.client.calls, ["ACC1001"])
+
+
+class AmountCollectionTests(unittest.TestCase):
+    def _verified_agent(self, balance=1250.75):
+        client = FakeLookupClient(
+            {
+                "account_id": "ACC1001",
+                "full_name": "Nithin Jain",
+                "dob": "1990-05-14",
+                "aadhaar_last4": "4321",
+                "pincode": "400001",
+                "balance": balance,
+            }
+        )
+        agent = Agent(client)
+        agent.next("ACC1001")
+        agent.next("Nithin Jain")
+        agent.next("DOB 1990-05-14")
+        return agent, client
+
+    def test_amount_is_not_disclosed_before_verification(self) -> None:
+        client = FakeLookupClient(
+            {
+                "account_id": "ACC1001",
+                "full_name": "Nithin Jain",
+                "dob": "1990-05-14",
+                "balance": 1250.75,
+            }
+        )
+        agent = Agent(client)
+
+        lookup = agent.next("ACC1001")
+        name = agent.next("Nithin Jain")
+
+        self.assertNotIn("1250.75", lookup["message"])
+        self.assertNotIn("1250.75", name["message"])
+
+    def test_numeric_currency_comma_and_worded_amounts_are_accepted(self) -> None:
+        for value in ("500", "1,000", "₹500.00", "a thousand rupees"):
+            with self.subTest(value=value):
+                agent, client = self._verified_agent()
+                response = agent.next(value)
+
+                self.assertEqual(response, {"message": Agent._AMOUNT_ACCEPTED_MESSAGE})
+                self.assertEqual(client.payment_calls, [])
+
+    def test_full_balance_request_uses_the_looked_up_balance(self) -> None:
+        agent, client = self._verified_agent()
+
+        response = agent.next("Please pay the outstanding balance")
+
+        self.assertEqual(response, {"message": Agent._AMOUNT_ACCEPTED_MESSAGE})
+        self.assertEqual(agent._amount, 1250.75)
+        self.assertEqual(client.payment_calls, [])
+
+    def test_invalid_zero_negative_precision_and_over_balance_amounts_are_local(self) -> None:
+        for value in ("0", "-1", "500.123", "1250.76"):
+            with self.subTest(value=value):
+                agent, client = self._verified_agent()
+
+                response = agent.next(value)
+
+                self.assertEqual(response, {"message": Agent._AMOUNT_CORRECTION_PROMPT})
+                self.assertEqual(client.payment_calls, [])
+
+    def test_valid_amount_supplied_before_amount_prompt_is_retained(self) -> None:
+        agent, client = self._verified_agent()
+
+        # The amount is supplied while identity verification is still pending.
+        agent = Agent(client)
+        agent.next("ACC1001")
+        agent.next("Nithin Jain")
+        agent.next("I want to pay ₹500")
+        response = agent.next("DOB 1990-05-14")
+
+        self.assertIn(Agent._AMOUNT_ACCEPTED_MESSAGE, response["message"])
+        self.assertEqual(agent._amount, 500)
+        self.assertEqual(client.payment_calls, [])
+
+    def test_zero_balance_discloses_zero_and_does_not_accept_payment_amount(self) -> None:
+        agent, client = self._verified_agent(balance=0)
+
+        self.assertIn("₹0.00", agent._amount_collection_message())
+        response = agent.next("100")
+
+        self.assertEqual(response, {"message": Agent._AMOUNT_CORRECTION_PROMPT})
+        self.assertEqual(client.payment_calls, [])
 
 
 class ApiClientTests(unittest.TestCase):

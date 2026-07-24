@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum, auto
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Callable, Mapping
 
 from api_client import (
@@ -13,6 +14,7 @@ from api_client import (
 from parsers import (
     contains_account_reference,
     extract_account_ids,
+    parse_amount_input,
     parse_identity_input,
 )
 
@@ -23,6 +25,7 @@ class _ConversationState(Enum):
     NEED_ACCOUNT = auto()
     NEED_FULL_NAME = auto()
     VERIFIED_NEED_AMOUNT = auto()
+    AMOUNT_COLLECTED = auto()
     CLOSED_FAILURE = auto()
 
 
@@ -48,6 +51,19 @@ class Agent:
         "exactly four Aadhaar last-four digits, or a six-digit pincode."
     )
     _VERIFIED_MESSAGE = "Your identity has been verified."
+    _AMOUNT_PROMPT = "Please provide the amount you would like to pay."
+    _AMOUNT_CORRECTION_PROMPT = (
+        "Please provide a payment amount greater than ₹0.00, no more than the "
+        "outstanding balance, and with no more than two decimal places."
+    )
+    _AMOUNT_ACCEPTED_MESSAGE = "Your payment amount has been recorded."
+    _ZERO_BALANCE_MESSAGE = (
+        "Your outstanding balance is ₹0.00. There is no payment amount to collect."
+    )
+    _BALANCE_UNAVAILABLE_MESSAGE = (
+        "Your identity has been verified, but I couldn't retrieve a valid "
+        "outstanding balance. Please try again later."
+    )
     _VERIFICATION_FAILURE_MESSAGE = (
         "Those details did not match our records. Please provide your full "
         "name and one verification detail again."
@@ -107,6 +123,9 @@ class Agent:
         self._invalid_dob_pending = False
         self._invalid_aadhaar_pending = False
         self._invalid_pincode_pending = False
+        self._amount: Decimal | None = None
+        self._full_balance_pending = False
+        self._invalid_amount_pending = False
         self._lookup_client = (
             lookup_client
             if lookup_client is not None
@@ -129,7 +148,9 @@ class Agent:
             if self._state is _ConversationState.NEED_ACCOUNT:
                 return {"message": self._ACCOUNT_PROMPT}
             if self._state is _ConversationState.VERIFIED_NEED_AMOUNT:
-                return {"message": self._VERIFIED_MESSAGE}
+                return {"message": self._amount_collection_message()}
+            if self._state is _ConversationState.AMOUNT_COLLECTED:
+                return {"message": self._AMOUNT_ACCEPTED_MESSAGE}
             return {"message": self._FULL_NAME_PROMPT}
 
         account_ids = extract_account_ids(user_input)
@@ -140,6 +161,8 @@ class Agent:
             if len(account_ids) == 0:
                 return {"message": self._ACCOUNT_CORRECTION_PROMPT}
             response = self._handle_account_id(account_ids[0])
+            if self._state is _ConversationState.NEED_FULL_NAME:
+                self._capture_amount_input(user_input)
             if self._state is _ConversationState.NEED_FULL_NAME and self._has_identity_input(
                 user_input
             ):
@@ -147,23 +170,31 @@ class Agent:
             return response
 
         if self._state is _ConversationState.VERIFIED_NEED_AMOUNT:
-            return {"message": self._VERIFIED_MESSAGE}
+            self._capture_amount_input(user_input, allow_plain_number=True)
+            return self._handle_amount_turn()
+
+        if self._state is _ConversationState.AMOUNT_COLLECTED:
+            return {"message": self._AMOUNT_ACCEPTED_MESSAGE}
 
         if len(account_ids) == 1:
             account_id = account_ids[0]
             if account_id != self._account_id:
                 response = self._handle_account_id(account_id)
+                if self._state is _ConversationState.NEED_FULL_NAME:
+                    self._capture_amount_input(user_input)
                 if self._state is _ConversationState.NEED_FULL_NAME and self._has_identity_input(
                     user_input
                 ):
                     return self._handle_identity_turn(user_input)
                 return response
             if self._has_identity_input(user_input):
+                self._capture_amount_input(user_input)
                 return self._handle_identity_turn(user_input)
             return {"message": self._FULL_NAME_PROMPT}
 
         if contains_account_reference(user_input):
             return {"message": self._ACCOUNT_CORRECTION_PROMPT}
+        self._capture_amount_input(user_input)
         return self._handle_identity_turn(user_input)
 
     @staticmethod
@@ -187,12 +218,14 @@ class Agent:
             self._account_id = None
             self._account = None
             self._reset_verification_context()
+            self._reset_amount_context()
             self._state = _ConversationState.NEED_ACCOUNT
             return {"message": self._lookup_failure_message(result.status)}
 
         self._account_id = account_id
         self._account = result.account
         self._reset_verification_context()
+        self._reset_amount_context()
         self._state = _ConversationState.NEED_FULL_NAME
         return {"message": self._FULL_NAME_PROMPT}
 
@@ -241,7 +274,7 @@ class Agent:
 
         if self._identity_matches_account():
             self._state = _ConversationState.VERIFIED_NEED_AMOUNT
-            return {"message": self._VERIFIED_MESSAGE}
+            return {"message": self._amount_collection_message()}
 
         return self._record_verification_failure()
 
@@ -304,6 +337,106 @@ class Agent:
     def _reset_verification_context(self) -> None:
         self._verification_attempts = 0
         self._reset_verification_candidates()
+
+    def _reset_amount_context(self) -> None:
+        self._amount = None
+        self._full_balance_pending = False
+        self._invalid_amount_pending = False
+
+    def _capture_amount_input(
+        self, user_input: str, *, allow_plain_number: bool = False
+    ) -> None:
+        candidates = parse_amount_input(
+            user_input, allow_plain_number=allow_plain_number
+        )
+        if candidates.full_balance:
+            self._full_balance_pending = True
+            self._amount = None
+            self._invalid_amount_pending = False
+        elif candidates.amount is not None:
+            self._amount = candidates.amount
+            self._full_balance_pending = False
+            self._invalid_amount_pending = False
+        elif candidates.invalid:
+            self._invalid_amount_pending = True
+
+    def _balance(self) -> Decimal | None:
+        if not isinstance(self._account, Mapping):
+            return None
+        raw_balance = self._account.get("balance", self._account.get("outstanding_balance"))
+        if raw_balance is None:
+            return None
+        try:
+            balance = Decimal(str(raw_balance))
+        except (InvalidOperation, ValueError):
+            return None
+        if not balance.is_finite() or balance < 0:
+            return None
+        return balance
+
+    @staticmethod
+    def _format_amount(amount: Decimal) -> str:
+        display = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return f"₹{display:.2f}"
+
+    def _amount_collection_message(self) -> str:
+        balance = self._balance()
+        if balance is None:
+            # Older injectable lookup clients may provide identity-only
+            # records. Keep verification behavior stable for those clients;
+            # amount validation still requires a real balance.
+            return self._VERIFIED_MESSAGE
+        formatted_balance = self._format_amount(balance)
+        if balance == 0:
+            return self._ZERO_BALANCE_MESSAGE
+        pending_amount = self._resolve_pending_amount()
+        if pending_amount is not None and self._is_valid_amount(
+            pending_amount, balance
+        ):
+            self._state = _ConversationState.AMOUNT_COLLECTED
+            return (
+                f"{self._VERIFIED_MESSAGE} Your outstanding balance is "
+                f"{formatted_balance}. {self._AMOUNT_ACCEPTED_MESSAGE}"
+            )
+        if self._invalid_amount_pending or pending_amount is not None:
+            return (
+                f"{self._VERIFIED_MESSAGE} Your outstanding balance is "
+                f"{formatted_balance}. {self._AMOUNT_CORRECTION_PROMPT}"
+            )
+        return (
+            f"{self._VERIFIED_MESSAGE} Your outstanding balance is "
+            f"{formatted_balance}. {self._AMOUNT_PROMPT}"
+        )
+
+    def _resolve_pending_amount(self) -> Decimal | None:
+        if self._full_balance_pending:
+            return self._balance()
+        return self._amount
+
+    @staticmethod
+    def _is_valid_amount(amount: Decimal, balance: Decimal) -> bool:
+        return (
+            amount.is_finite()
+            and amount > 0
+            and abs(amount.as_tuple().exponent) <= 2
+            and amount <= balance
+        )
+
+    def _handle_amount_turn(self) -> dict[str, str]:
+        balance = self._balance()
+        amount = self._resolve_pending_amount()
+        if balance is None:
+            return {"message": self._BALANCE_UNAVAILABLE_MESSAGE}
+        if amount is None:
+            return {"message": self._AMOUNT_CORRECTION_PROMPT}
+        if not self._is_valid_amount(amount, balance):
+            return {"message": self._AMOUNT_CORRECTION_PROMPT}
+
+        self._amount = amount
+        self._full_balance_pending = False
+        self._invalid_amount_pending = False
+        self._state = _ConversationState.AMOUNT_COLLECTED
+        return {"message": self._AMOUNT_ACCEPTED_MESSAGE}
 
     def _perform_lookup(self, account_id: str) -> AccountLookupResult:
         try:
