@@ -40,18 +40,18 @@ These tickets are ordered in dependency order. Each ticket declares its blocking
 
 **Blocked by:** 02 — Add Account ID Extraction, Validation, and Lookup Flow.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] The agent asks for full name before asking for a secondary factor.
-- [ ] Full-name comparison is exact after harmless whitespace cleanup only.
-- [ ] DOB inputs are canonicalized to `YYYY-MM-DD` and impossible dates are rejected without counting as failed verification.
-- [ ] Ambiguous two-digit-year DOBs are rejected with a request for a four-digit year.
-- [ ] Aadhaar last four requires exactly four digits and pincode requires exactly six digits with sufficient context.
-- [ ] Verification passes only on exact full name and one exact secondary-factor match.
-- [ ] Missing verification data does not increment the retry counter.
-- [ ] A complete but incorrect verification submission increments one shared verification retry counter.
-- [ ] Three failed complete verification attempts close the conversation and prevent any later API calls.
-- [ ] Verification failure responses do not reveal which stored field was wrong.
+- [x] The agent asks for full name before asking for a secondary factor.
+- [x] Full-name comparison is exact after harmless whitespace cleanup only.
+- [x] DOB inputs are canonicalized to `YYYY-MM-DD` and impossible dates are rejected without counting as failed verification.
+- [x] Ambiguous two-digit-year DOBs are rejected with a request for a four-digit year.
+- [x] Aadhaar last four requires exactly four digits and pincode requires exactly six digits with sufficient context.
+- [x] Verification passes only on exact full name and one exact secondary-factor match.
+- [x] Missing verification data does not increment the retry counter.
+- [x] A complete but incorrect verification submission increments one shared verification retry counter.
+- [x] Three failed complete verification attempts close the conversation and prevent any later API calls.
+- [x] Verification failure responses do not reveal which stored field was wrong.
 
 ## 04 — Disclose Balance and Collect Valid Payment Amounts
 

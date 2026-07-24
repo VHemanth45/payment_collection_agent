@@ -10,7 +10,11 @@ from api_client import (
     ApiClient,
     LookupStatus,
 )
-from parsers import contains_account_reference, extract_account_ids
+from parsers import (
+    contains_account_reference,
+    extract_account_ids,
+    parse_identity_input,
+)
 
 
 class _ConversationState(Enum):
@@ -18,6 +22,8 @@ class _ConversationState(Enum):
 
     NEED_ACCOUNT = auto()
     NEED_FULL_NAME = auto()
+    VERIFIED_NEED_AMOUNT = auto()
+    CLOSED_FAILURE = auto()
 
 
 class Agent:
@@ -33,6 +39,23 @@ class Agent:
         "in the format ACC####."
     )
     _FULL_NAME_PROMPT = "Thanks. Please provide your full name for verification."
+    _SECONDARY_FACTOR_PROMPT = (
+        "Please provide one verification detail: your date of birth, "
+        "Aadhaar last four digits, or six-digit pincode."
+    )
+    _INVALID_SECONDARY_FACTOR_PROMPT = (
+        "Please provide a valid date of birth with a four-digit year, "
+        "exactly four Aadhaar last-four digits, or a six-digit pincode."
+    )
+    _VERIFIED_MESSAGE = "Your identity has been verified."
+    _VERIFICATION_FAILURE_MESSAGE = (
+        "Those details did not match our records. Please provide your full "
+        "name and one verification detail again."
+    )
+    _VERIFICATION_LOCKED_MESSAGE = (
+        "I couldn't verify your identity after three attempts. "
+        "This conversation is now closed."
+    )
     _UNKNOWN_ACCOUNT_MESSAGE = (
         "I couldn't find that account ID. Please check it and send it again."
     )
@@ -76,6 +99,14 @@ class Agent:
         self._state = _ConversationState.NEED_ACCOUNT
         self._account_id: str | None = None
         self._account: Mapping[str, Any] | None = None
+        self._verification_attempts = 0
+        self._name_candidate: str | None = None
+        self._dob_candidate: str | None = None
+        self._aadhaar_candidate: str | None = None
+        self._pincode_candidate: str | None = None
+        self._invalid_dob_pending = False
+        self._invalid_aadhaar_pending = False
+        self._invalid_pincode_pending = False
         self._lookup_client = (
             lookup_client
             if lookup_client is not None
@@ -91,9 +122,14 @@ class Agent:
         stable at runtime.
         """
 
+        if self._state is _ConversationState.CLOSED_FAILURE:
+            return {"message": self._VERIFICATION_LOCKED_MESSAGE}
+
         if not isinstance(user_input, str) or not user_input.strip():
             if self._state is _ConversationState.NEED_ACCOUNT:
                 return {"message": self._ACCOUNT_PROMPT}
+            if self._state is _ConversationState.VERIFIED_NEED_AMOUNT:
+                return {"message": self._VERIFIED_MESSAGE}
             return {"message": self._FULL_NAME_PROMPT}
 
         account_ids = extract_account_ids(user_input)
@@ -103,30 +139,171 @@ class Agent:
         if self._state is _ConversationState.NEED_ACCOUNT:
             if len(account_ids) == 0:
                 return {"message": self._ACCOUNT_CORRECTION_PROMPT}
-            return self._handle_account_id(account_ids[0])
+            response = self._handle_account_id(account_ids[0])
+            if self._state is _ConversationState.NEED_FULL_NAME and self._has_identity_input(
+                user_input
+            ):
+                return self._handle_identity_turn(user_input)
+            return response
+
+        if self._state is _ConversationState.VERIFIED_NEED_AMOUNT:
+            return {"message": self._VERIFIED_MESSAGE}
 
         if len(account_ids) == 1:
             account_id = account_ids[0]
             if account_id != self._account_id:
-                return self._handle_account_id(account_id)
+                response = self._handle_account_id(account_id)
+                if self._state is _ConversationState.NEED_FULL_NAME and self._has_identity_input(
+                    user_input
+                ):
+                    return self._handle_identity_turn(user_input)
+                return response
+            if self._has_identity_input(user_input):
+                return self._handle_identity_turn(user_input)
             return {"message": self._FULL_NAME_PROMPT}
 
         if contains_account_reference(user_input):
             return {"message": self._ACCOUNT_CORRECTION_PROMPT}
-        return {"message": self._FULL_NAME_PROMPT}
+        return self._handle_identity_turn(user_input)
+
+    @staticmethod
+    def _has_identity_input(user_input: str) -> bool:
+        candidates = parse_identity_input(user_input)
+        return any(
+            (
+                candidates.name is not None,
+                candidates.dob is not None,
+                candidates.aadhaar_last4 is not None,
+                candidates.pincode is not None,
+                candidates.invalid_dob,
+                candidates.invalid_aadhaar,
+                candidates.invalid_pincode,
+            )
+        )
 
     def _handle_account_id(self, account_id: str) -> dict[str, str]:
         result = self._perform_lookup(account_id)
         if result.status is not LookupStatus.FOUND:
             self._account_id = None
             self._account = None
+            self._reset_verification_context()
             self._state = _ConversationState.NEED_ACCOUNT
             return {"message": self._lookup_failure_message(result.status)}
 
         self._account_id = account_id
         self._account = result.account
+        self._reset_verification_context()
         self._state = _ConversationState.NEED_FULL_NAME
         return {"message": self._FULL_NAME_PROMPT}
+
+    def _handle_identity_turn(self, user_input: str) -> dict[str, str]:
+        candidates = parse_identity_input(user_input)
+        if candidates.name is not None:
+            self._name_candidate = candidates.name
+        if candidates.dob is not None:
+            self._dob_candidate = candidates.dob
+            self._invalid_dob_pending = False
+        elif candidates.invalid_dob:
+            self._invalid_dob_pending = True
+        if candidates.aadhaar_last4 is not None:
+            self._aadhaar_candidate = candidates.aadhaar_last4
+            self._invalid_aadhaar_pending = False
+        elif candidates.invalid_aadhaar:
+            self._invalid_aadhaar_pending = True
+        if candidates.pincode is not None:
+            self._pincode_candidate = candidates.pincode
+            self._invalid_pincode_pending = False
+        elif candidates.invalid_pincode:
+            self._invalid_pincode_pending = True
+
+        if self._name_candidate is None:
+            return {"message": self._FULL_NAME_PROMPT}
+
+        has_secondary = any(
+            candidate is not None
+            for candidate in (
+                self._dob_candidate,
+                self._aadhaar_candidate,
+                self._pincode_candidate,
+            )
+        )
+        if not has_secondary:
+            if (
+                candidates.invalid_dob
+                or candidates.invalid_aadhaar
+                or candidates.invalid_pincode
+                or self._invalid_dob_pending
+                or self._invalid_aadhaar_pending
+                or self._invalid_pincode_pending
+            ):
+                return {"message": self._INVALID_SECONDARY_FACTOR_PROMPT}
+            return {"message": self._SECONDARY_FACTOR_PROMPT}
+
+        if self._identity_matches_account():
+            self._state = _ConversationState.VERIFIED_NEED_AMOUNT
+            return {"message": self._VERIFIED_MESSAGE}
+
+        return self._record_verification_failure()
+
+    def _identity_matches_account(self) -> bool:
+        if not isinstance(self._account, Mapping):
+            return False
+
+        expected_name = self._account.get("full_name")
+        if not isinstance(expected_name, str):
+            return False
+        if self._normalize_name(expected_name) != self._normalize_name(
+            self._name_candidate
+        ):
+            return False
+
+        return any(
+            (
+                self._dob_candidate is not None
+                and self._dob_candidate == self._canonical_stored_value("dob"),
+                self._aadhaar_candidate is not None
+                and self._aadhaar_candidate
+                == self._canonical_stored_value("aadhaar_last4"),
+                self._pincode_candidate is not None
+                and self._pincode_candidate
+                == self._canonical_stored_value("pincode"),
+            )
+        )
+
+    def _canonical_stored_value(self, field: str) -> str | None:
+        if not isinstance(self._account, Mapping):
+            return None
+        value = self._account.get(field)
+        if value is None:
+            return None
+        return str(value).strip()
+
+    @staticmethod
+    def _normalize_name(value: str | None) -> str:
+        if not isinstance(value, str):
+            return ""
+        return " ".join(value.strip().split())
+
+    def _record_verification_failure(self) -> dict[str, str]:
+        self._verification_attempts += 1
+        self._reset_verification_candidates()
+        if self._verification_attempts >= 3:
+            self._state = _ConversationState.CLOSED_FAILURE
+            return {"message": self._VERIFICATION_LOCKED_MESSAGE}
+        return {"message": self._VERIFICATION_FAILURE_MESSAGE}
+
+    def _reset_verification_candidates(self) -> None:
+        self._name_candidate = None
+        self._dob_candidate = None
+        self._aadhaar_candidate = None
+        self._pincode_candidate = None
+        self._invalid_dob_pending = False
+        self._invalid_aadhaar_pending = False
+        self._invalid_pincode_pending = False
+
+    def _reset_verification_context(self) -> None:
+        self._verification_attempts = 0
+        self._reset_verification_candidates()
 
     def _perform_lookup(self, account_id: str) -> AccountLookupResult:
         try:

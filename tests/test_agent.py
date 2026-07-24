@@ -140,6 +140,113 @@ class AccountLookupTests(unittest.TestCase):
         self.assertIn("full name", response["message"])
 
 
+class IdentityVerificationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = FakeLookupClient(
+            {
+                "account_id": "ACC1001",
+                "full_name": "Nithin Jain",
+                "dob": "1990-05-14",
+                "aadhaar_last4": "4321",
+                "pincode": "400001",
+                "balance": 1250.75,
+            }
+        )
+        self.agent = Agent(self.client)
+        self.agent.next("ACC1001")
+
+    def test_exact_name_and_one_secondary_factor_verify_without_balance_disclosure(
+        self,
+    ) -> None:
+        name_response = self.agent.next("Nithin   Jain")
+        verified_response = self.agent.next("Date of birth: 14th May 1990")
+
+        self.assertIn("verification detail", name_response["message"])
+        self.assertEqual(verified_response, {"message": Agent._VERIFIED_MESSAGE})
+        self.assertNotIn("1250.75", verified_response["message"])
+        self.assertNotIn("1990-05-14", verified_response["message"])
+        self.assertNotIn("4321", verified_response["message"])
+        self.assertNotIn("400001", verified_response["message"])
+
+    def test_secondary_factor_can_arrive_before_name(self) -> None:
+        name_prompt = self.agent.next("DOB 1990-05-14")
+        verified_response = self.agent.next("full name: Nithin Jain")
+
+        self.assertEqual(name_prompt, {"message": Agent._FULL_NAME_PROMPT})
+        self.assertEqual(verified_response, {"message": Agent._VERIFIED_MESSAGE})
+
+    def test_invalid_factor_before_name_remains_a_non_counting_correction(self) -> None:
+        name_prompt = self.agent.next("DOB 1990-02-30")
+        correction = self.agent.next("Nithin Jain")
+        verified_response = self.agent.next("DOB 1990-05-14")
+
+        self.assertEqual(name_prompt, {"message": Agent._FULL_NAME_PROMPT})
+        self.assertEqual(
+            correction, {"message": Agent._INVALID_SECONDARY_FACTOR_PROMPT}
+        )
+        self.assertEqual(verified_response, {"message": Agent._VERIFIED_MESSAGE})
+
+    def test_identity_fields_supplied_with_account_are_retained(self) -> None:
+        client = FakeLookupClient(self.client.response)
+        agent = Agent(client)
+
+        response = agent.next(
+            "account id ACC1001, my full name is Nithin Jain, "
+            "and my DOB is 1990-05-14"
+        )
+
+        self.assertEqual(response, {"message": Agent._VERIFIED_MESSAGE})
+        self.assertEqual(client.calls, ["ACC1001"])
+
+    def test_name_comparison_is_case_sensitive_and_failure_is_generic(self) -> None:
+        self.agent.next("nithin jain")
+        response = self.agent.next("pincode is 400001")
+
+        self.assertEqual(response["message"], Agent._VERIFICATION_FAILURE_MESSAGE)
+        self.assertNotIn("Nithin Jain", response["message"])
+        self.assertNotIn("1990-05-14", response["message"])
+        self.assertNotIn("4321", response["message"])
+        self.assertNotIn("400001", response["message"])
+
+    def test_invalid_and_ambiguous_dobs_are_rejected_without_a_failed_attempt(self) -> None:
+        self.agent.next("Nithin Jain")
+
+        impossible = self.agent.next("DOB 1990-02-30")
+        ambiguous = self.agent.next("DOB May 14, 90")
+        verified = self.agent.next("DOB 1990-05-14")
+
+        self.assertEqual(
+            impossible, {"message": Agent._INVALID_SECONDARY_FACTOR_PROMPT}
+        )
+        self.assertEqual(
+            ambiguous, {"message": Agent._INVALID_SECONDARY_FACTOR_PROMPT}
+        )
+        self.assertEqual(verified, {"message": Agent._VERIFIED_MESSAGE})
+
+    def test_aadhaar_and_pincode_require_their_exact_lengths(self) -> None:
+        self.agent.next("Nithin Jain")
+
+        invalid = self.agent.next("Aadhaar last four is 123")
+        valid = self.agent.next("Aadhaar last four is 4321")
+
+        self.assertEqual(invalid, {"message": Agent._INVALID_SECONDARY_FACTOR_PROMPT})
+        self.assertEqual(valid, {"message": Agent._VERIFIED_MESSAGE})
+
+    def test_three_complete_failures_lock_conversation_and_block_later_calls(self) -> None:
+        for attempt in range(3):
+            self.agent.next(f"Wrong Name {attempt}")
+            response = self.agent.next("pincode 999999")
+
+        self.assertEqual(response, {"message": Agent._VERIFICATION_LOCKED_MESSAGE})
+        self.assertEqual(self.client.calls, ["ACC1001"])
+        self.assertEqual(self.client.payment_calls, [])
+        self.assertEqual(
+            self.agent.next("ACC1002"),
+            {"message": Agent._VERIFICATION_LOCKED_MESSAGE},
+        )
+        self.assertEqual(self.client.calls, ["ACC1001"])
+
+
 class ApiClientTests(unittest.TestCase):
     class Response:
         def __init__(self, status, body):
