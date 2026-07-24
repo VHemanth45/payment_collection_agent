@@ -251,8 +251,16 @@ def _extract_digit_factor(
     return None, True
 
 
-def parse_identity_input(user_input: str) -> IdentityCandidates:
-    """Extract identity candidates without guessing unlabeled digit factors."""
+def parse_identity_input(
+    user_input: str, *, allow_unlabeled_factors: bool = False
+) -> IdentityCandidates:
+    """Extract identity candidates, optionally using the current prompt context.
+
+    Bare four- or six-digit values are only accepted when the caller has
+    explicitly established that the conversation is collecting a verification
+    factor.  This keeps general turns from guessing what an unlabeled number
+    means while making the guided CLI natural to use.
+    """
 
     if not isinstance(user_input, str):
         return IdentityCandidates()
@@ -328,6 +336,17 @@ def parse_identity_input(user_input: str) -> IdentityCandidates:
                 and user_input.strip()
             ):
                 name = clean_name(user_input)
+
+    if allow_unlabeled_factors and re.fullmatch(r"\s*\d+\s*", user_input):
+        digits = user_input.strip()
+        if len(digits) == 4:
+            aadhaar = digits
+            invalid_aadhaar = False
+        elif len(digits) == 6:
+            pincode = digits
+            invalid_pincode = False
+        else:
+            invalid_aadhaar = True
 
     return IdentityCandidates(
         name=name or None,
@@ -674,32 +693,6 @@ def parse_card_input(user_input: str) -> CardCandidates:
         r"\s*(?:[a-z]+(?:[\s-]+[a-z]+){2,3})\s*", value, re.IGNORECASE
     ):
         cvv = _parse_spoken_cvv(value)
-
-    # Also accept the natural positional form commonly used in the CLI:
-    # ``Name, card-number, CVV, MM/YYYY``.  Labeled fields remain the primary
-    # path; this fallback only runs when a card number is present and fills
-    # fields that were not already extracted by a label.
-    positional_parts = [
-        part.strip() for part in re.split(r"[,;]", value) if part.strip()
-    ]
-    if card_number is not None and len(positional_parts) > 1:
-        for part in positional_parts:
-            if normalize_card_number(part) == card_number:
-                continue
-            if cardholder_name is None and re.search(r"[A-Za-z]", part):
-                if not re.search(
-                    r"\b(?:cardholder|card\s*(?:number|no\.?|#)|number\s+on\s+card|"
-                    r"cvv|cvc|security\s+code|exp(?:iry|iration)?|expires?|"
-                    r"valid\s*(?:thru|through))\b",
-                    part,
-                    re.IGNORECASE,
-                ):
-                    cardholder_name = clean_name(part)
-            if cvv is None:
-                positional_cvv = _parse_spoken_cvv(part)
-                if positional_cvv is not None:
-                    cvv = positional_cvv
-                    invalid_cvv = False
 
     expiry_month: int | None = None
     expiry_year: int | None = None

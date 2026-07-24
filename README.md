@@ -38,7 +38,10 @@ You: account id ACC1002
 You: Rajarajeswari Balasubramaniam
 You: DOB 1985-11-23
 You: 100
-You: cardholder name: Rajarajeswari Balasubramaniam, card number: 4532 0151 1283 0366, CVV: 123, expiry: 12/2027
+You: Rajarajeswari Balasubramaniam
+You: 4532 0151 1283 0366
+You: 123
+You: 12/2027
 ```
 
 Another sample conversation is:
@@ -48,7 +51,10 @@ You: account id ACC1001
 You: Nithin Jain
 You: DOB 1990-05-14
 You: pay the outstanding balance
-You: cardholder name: Demo Cardholder, card number: 4532 0151 1283 0366, CVV: 123, expiry: 12/2027
+You: Demo Cardholder
+You: 4532 0151 1283 0366
+You: 123
+You: 12/2027
 ```
 
 Use `:quit` to leave. The CLI requires network access to the configured

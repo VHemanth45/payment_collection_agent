@@ -24,7 +24,10 @@ class CliTests(unittest.TestCase):
             "Nithin Jain\n"
             "DOB 1990-05-14\n"
             "pay the outstanding balance\n"
-            "Nithin Jain, 4532 0151 1283 0366, 123, 12/2027\n"
+            "Nithin Jain\n"
+            "4532 0151 1283 0366\n"
+            "123\n"
+            "12/2027\n"
             ":quit\n"
         )
         output_stream = StringIO()
@@ -40,6 +43,19 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertIn("Payment successful", output)
         self.assertIn("demo-txn-001", output)
+        self.assertIn("What name should appear", output)
+        self.assertLess(
+            output.index("What name should appear"),
+            output.index("What is the card number"),
+        )
+        self.assertLess(
+            output.index("What is the card number"),
+            output.index("What is the CVV"),
+        )
+        self.assertLess(
+            output.index("What is the CVV"),
+            output.index("What is the card expiry date"),
+        )
         for secret in ("1990-05-14", "4321", "400001", "123", "4532015112830366"):
             self.assertNotIn(secret, output)
 

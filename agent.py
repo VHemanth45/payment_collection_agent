@@ -266,7 +266,10 @@ class Agent:
         ) is not None
         return _RegexTurn(
             extract_account_ids(user_input),
-            parse_identity_input(user_input),
+            parse_identity_input(
+                user_input,
+                allow_unlabeled_factors=self._state is _ConversationState.NEED_FULL_NAME,
+            ),
             parse_amount_input(
                 user_input,
                 allow_plain_number=self._state is _ConversationState.VERIFIED_NEED_AMOUNT,
@@ -626,7 +629,9 @@ class Agent:
         return {"message": self._FULL_NAME_PROMPT}
 
     def _handle_identity_turn(self, user_input: str) -> dict[str, str]:
-        candidates = parse_identity_input(user_input)
+        candidates = parse_identity_input(
+            user_input, allow_unlabeled_factors=True
+        )
         if candidates.name is not None:
             self._name_candidate = candidates.name
         if candidates.dob is not None:
@@ -1157,22 +1162,15 @@ class Agent:
             missing.append("expiry date")
         if not missing:
             return self._CARD_DETAILS_ACCEPTED_MESSAGE
-        if len(missing) == 4 and not any(
-            (
-                self._invalid_cardholder_name,
-                self._invalid_card_number,
-                self._invalid_cvv,
-                self._invalid_expiry,
-            )
-        ):
-            return self._CARD_DETAILS_PROMPT
-        if len(missing) == 1:
+        invalid_fields = {
+            "cardholder name": self._invalid_cardholder_name,
+            "card number": self._invalid_card_number,
+            "CVV": self._invalid_cvv,
+            "expiry date": self._invalid_expiry,
+        }
+        if invalid_fields[missing[0]]:
             return f"Please provide a valid {missing[0]}."
-        if len(missing) == 2:
-            requested = f"{missing[0]} and {missing[1]}"
-        else:
-            requested = ", ".join(missing[:-1]) + f", and {missing[-1]}"
-        return f"Please provide valid {requested}."
+        return _messages.card_field_prompt(missing[0])
 
     def _perform_lookup(self, account_id: str) -> AccountLookupResult:
         try:

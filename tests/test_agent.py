@@ -32,7 +32,7 @@ class AgentConversationTests(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertEqual(
-            first, {"message": "Please provide your account ID to get started."}
+            first, {"message": Agent._ACCOUNT_PROMPT}
         )
 
 
@@ -393,12 +393,14 @@ class CardCollectionTests(unittest.TestCase):
             "cardholder name: Someone Else; card number 4532-0151-1283-0366"
         )
         self.assertIn("CVV", first["message"])
-        self.assertIn("expiry date", first["message"])
+        self.assertNotIn("expiry date", first["message"])
         self.assertNotIn("cardholder", first["message"])
         self.assertNotIn("card number", first["message"])
 
         second = agent.next("expiry 12/27")
-        self.assertEqual(second, {"message": "Please provide a valid CVV."})
+        self.assertEqual(
+            second, {"message": "What is the CVV? Enter 3 or 4 digits."}
+        )
 
         response = agent.next("one two three")
         self.assertIn("txn_test", response["message"])
@@ -416,8 +418,8 @@ class CardCollectionTests(unittest.TestCase):
         )
 
         self.assertIn("card number", response["message"])
-        self.assertIn("CVV", response["message"])
-        self.assertIn("expiry date", response["message"])
+        self.assertNotIn("CVV", response["message"])
+        self.assertNotIn("expiry date", response["message"])
         self.assertNotIn("4111111111111112", response["message"])
         self.assertNotIn("12", response["message"])
         self.assertEqual(client.payment_calls, [])

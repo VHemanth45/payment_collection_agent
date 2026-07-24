@@ -31,6 +31,7 @@ def run_cli(
 
     print(f"Agent: {agent.next('')['message']}", file=output_stream)
     while True:
+        print("You: ", end="", file=output_stream, flush=True)
         try:
             line = input_stream.readline()
         except KeyboardInterrupt:

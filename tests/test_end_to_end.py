@@ -40,7 +40,7 @@ class EndToEndTests(unittest.TestCase):
         balance = agent.next("Please pay the full outstanding balance")
         success = agent.next(card_turn())
 
-        self.assertEqual(balance["message"], "Your payment amount has been recorded.")
+        self.assertEqual(balance["message"], Agent._AMOUNT_ACCEPTED_MESSAGE)
         self.assertIn("Payment successful", success["message"])
         self.assertIn("₹1250.75", success["message"])
         self.assertIn("demo-txn-001", success["message"])
@@ -71,6 +71,17 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(len(client.lookup_calls), 1)
         self.assertEqual(len(client.payment_calls), 1)
         self.assertEqual(client.payment_calls[0]["amount"], Decimal("500.00"))
+
+    def test_guided_verification_accepts_bare_aadhaar_or_pincode_digits(self):
+        client = EvaluationClient()
+        agent = Agent(client)
+        agent.next("ACC1001")
+        agent.next("Nithin Jain")
+
+        response = agent.next("4321")
+
+        self.assertIn("₹1250.75", response["message"])
+        self.assertEqual(client.lookup_calls, ["ACC1001"])
 
     def test_three_failed_verification_attempts_lock_out_without_payment_or_lookup(self):
         client = EvaluationClient()
@@ -105,7 +116,7 @@ class EndToEndTests(unittest.TestCase):
         self.assertIn("account ID", early_card["message"])
         self.assertIn("full name", account["message"])
         self.assertIn("verification detail", name["message"])
-        self.assertIn("payment amount has been recorded", verified["message"])
+        self.assertIn(Agent._AMOUNT_ACCEPTED_MESSAGE, verified["message"])
         self.assertIn("Payment successful", success["message"])
         self.assertEqual(len(client.payment_calls), 1)
 

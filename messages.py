@@ -12,33 +12,41 @@ from decimal import Decimal, ROUND_HALF_UP
 from redaction import redact_text
 
 
-ACCOUNT_PROMPT = "Please provide your account ID to get started."
+ACCOUNT_PROMPT = "Let's get started. What is your account ID? (Example: ACC1002)"
 ACCOUNT_CORRECTION_PROMPT = (
-    "Please provide one valid account ID in the format ACC####, "
-    "for example, ACC1001."
+    "I couldn't read that as one account ID. Please enter one in the ACC#### "
+    "format, like ACC1002."
 )
 AMBIGUOUS_ACCOUNT_PROMPT = (
     "I found more than one possible account ID. Please send one account ID "
     "in the format ACC####."
 )
-FULL_NAME_PROMPT = "Thanks. Please provide your full name for verification."
+FULL_NAME_PROMPT = (
+    "Thanks. What is your full name exactly as it appears on the account?"
+)
 SECONDARY_FACTOR_PROMPT = (
-    "Please provide one verification detail: your date of birth, "
-    "Aadhaar last four digits, or six-digit pincode."
+    "To verify you, provide one verification detail: DOB (YYYY-MM-DD), "
+    "Aadhaar last four digits, or your six-digit pincode. You can send just "
+    "the digits."
 )
 INVALID_SECONDARY_FACTOR_PROMPT = (
-    "Please provide a valid date of birth with a four-digit year, "
-    "exactly four Aadhaar last-four digits, or a six-digit pincode."
+    "That verification detail doesn't look right. Send DOB as YYYY-MM-DD, "
+    "exactly four Aadhaar last-four digits, or exactly six pincode digits."
 )
 VERIFIED_MESSAGE = "Your identity has been verified."
-AMOUNT_PROMPT = "Please provide the amount you would like to pay."
+AMOUNT_PROMPT = (
+    "How much would you like to pay? Enter an amount such as ₹100, or say "
+    "'pay the full balance'."
+)
 AMOUNT_CORRECTION_PROMPT = (
     "Please provide a payment amount greater than ₹0.00, no more than the "
     "outstanding balance, and with no more than two decimal places."
 )
-AMOUNT_ACCEPTED_MESSAGE = "Your payment amount has been recorded."
+AMOUNT_ACCEPTED_MESSAGE = (
+    "Got it — your payment amount is recorded. What name should appear on the card?"
+)
 CARD_DETAILS_PROMPT = (
-    "Please provide your cardholder name, card number, CVV, and expiry date."
+    "What name should appear on the card?"
 )
 CARD_DETAILS_ACCEPTED_MESSAGE = "Your card details have been recorded."
 PAYMENT_FAILURE_MESSAGE = "I couldn't complete the payment. Please try again later."
@@ -55,16 +63,13 @@ INSUFFICIENT_BALANCE_MESSAGE = (
     "Please provide a smaller payment amount."
 )
 INVALID_CARD_PAYMENT_MESSAGE = (
-    "The card number was not accepted. Please provide a different card "
-    "number and the card details again."
+    "The card number was not accepted. Please enter a different card number."
 )
 INVALID_CVV_PAYMENT_MESSAGE = (
-    "The CVV was not accepted. Please provide the card details again with "
-    "a valid CVV."
+    "The CVV was not accepted. Please enter a valid CVV."
 )
 INVALID_EXPIRY_PAYMENT_MESSAGE = (
-    "The expiry date was not accepted. Please provide the card details "
-    "again with a valid expiry date."
+    "The expiry date was not accepted. Please enter a valid expiry date."
 )
 ZERO_BALANCE_MESSAGE = (
     "Your outstanding balance is ₹0.00. There is no payment amount to collect."
@@ -129,7 +134,16 @@ def local_card_failure_message(
         safe_fields = ["card number"]
     if not safe_fields:
         return CARD_DETAILS_PROMPT
-    if len(safe_fields) == 1:
-        return f"Please provide a valid {safe_fields[0]} and the card details again."
-    requested = ", ".join(safe_fields[:-1]) + f", and {safe_fields[-1]}"
-    return f"Please correct {requested}, then provide the card details again."
+    return f"Please provide a valid {safe_fields[0]}."
+
+
+def card_field_prompt(field: str) -> str:
+    """Ask for exactly one missing card field."""
+
+    prompts = {
+        "cardholder name": "What name should appear on the card?",
+        "card number": "What is the card number? Enter 12–19 digits.",
+        "CVV": "What is the CVV? Enter 3 or 4 digits.",
+        "expiry date": "What is the card expiry date? Use MM/YYYY.",
+    }
+    return prompts.get(field, CARD_DETAILS_PROMPT)
