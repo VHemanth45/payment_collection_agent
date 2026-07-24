@@ -12,6 +12,8 @@ from api_client import (
     PaymentStatus,
 )
 from agent import Agent
+from models import PaymentCard
+from pydantic import ValidationError
 
 
 class AgentConversationTests(unittest.TestCase):
@@ -96,6 +98,29 @@ class AccountLookupTests(unittest.TestCase):
         self.assertIn("one account ID", ambiguous["message"])
         self.assertEqual(client.calls, [])
         self.assertEqual(client.payment_calls, [])
+
+
+class PaymentCardSchemaTests(unittest.TestCase):
+    def test_card_number_validation_enforces_luhn_and_normalizes_spacing(self) -> None:
+        card = PaymentCard(
+            cardholder_name="Hemanth",
+            card_number="4532 0151 1283 0366",
+            cvv="123",
+            expiry_month=12,
+            expiry_year=2027,
+        )
+
+        self.assertEqual(card.card_number, "4532015112830366")
+
+    def test_card_number_rejects_non_digits_and_wrong_length(self) -> None:
+        with self.assertRaises(ValidationError):
+            PaymentCard(
+                cardholder_name="Hemanth",
+                card_number="4532 0151 12",
+                cvv="123",
+                expiry_month=12,
+                expiry_year=2027,
+            )
 
     def test_unknown_account_can_be_resubmitted(self) -> None:
         client = FakeLookupClient(None)
@@ -541,7 +566,11 @@ class PaymentFailureTests(unittest.TestCase):
         response = agent.next(self._card_turn())
         self.assertIn("smaller", response["message"])
         self.assertEqual(agent._state.name, "VERIFIED_NEED_AMOUNT")
-        self.assertIsNone(agent._card_number)
+        self.assertIsNotNone(agent._cardholder_name)
+        self.assertIsNotNone(agent._card_number)
+        self.assertIsNotNone(agent._cvv)
+        self.assertIsNotNone(agent._expiry_month)
+        self.assertIsNotNone(agent._expiry_year)
 
         self.assertEqual(agent.next("400"), {"message": Agent._AMOUNT_ACCEPTED_MESSAGE})
         success = agent.next(self._card_turn())
@@ -560,10 +589,56 @@ class PaymentFailureTests(unittest.TestCase):
         self.assertIn("card number", response["message"])
         self.assertNotIn("4532015112830366", response["message"])
         self.assertNotIn("123", response["message"])
-        self.assertIsNone(agent._card_number)
+        self.assertIsNotNone(agent._cardholder_name)
+        self.assertIsNotNone(agent._card_number)
+        self.assertIsNotNone(agent._cvv)
+        self.assertIsNotNone(agent._expiry_month)
+        self.assertIsNotNone(agent._expiry_year)
 
         success = agent.next(self._card_turn())
         self.assertIn("txn_corrected", success["message"])
+        self.assertEqual(len(client.payment_calls), 2)
+
+    def test_api_invalid_cvv_keeps_other_card_fields_for_single_field_retry(self) -> None:
+        agent, client = self._amount_collected_agent(
+            [
+                PaymentResult(status=PaymentStatus.INVALID_CVV),
+                {"success": True, "transaction_id": "txn_cvv_corrected"},
+            ]
+        )
+
+        response = agent.next(self._card_turn())
+        self.assertIn("CVV", response["message"])
+        self.assertIsNotNone(agent._cardholder_name)
+        self.assertIsNotNone(agent._card_number)
+        self.assertIsNotNone(agent._expiry_month)
+        self.assertIsNotNone(agent._expiry_year)
+
+        success = agent.next("654")
+        self.assertIn("txn_cvv_corrected", success["message"])
+        self.assertEqual(len(client.payment_calls), 2)
+
+    def test_api_invalid_expiry_keeps_other_card_fields_for_single_field_retry(self) -> None:
+        agent, client = self._amount_collected_agent(
+            [
+                PaymentResult(status=PaymentStatus.INVALID_EXPIRY),
+                {"success": True, "transaction_id": "txn_expiry_corrected"},
+            ]
+        )
+
+        response = agent.next(
+            "cardholder name: Someone Else, card number: 4532-0151-1283-0366, "
+            "CVV: 123, expiry: 12/2027"
+        )
+        self.assertIn("expiry", response["message"])
+        self.assertIsNotNone(agent._cardholder_name)
+        self.assertIsNotNone(agent._card_number)
+        self.assertIsNotNone(agent._cvv)
+        self.assertIsNotNone(agent._expiry_month)
+        self.assertIsNotNone(agent._expiry_year)
+
+        success = agent.next("12/2028")
+        self.assertIn("txn_expiry_corrected", success["message"])
         self.assertEqual(len(client.payment_calls), 2)
 
     def test_three_retryable_failures_close_and_block_later_payment_calls(self) -> None:

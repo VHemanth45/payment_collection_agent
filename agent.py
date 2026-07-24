@@ -978,6 +978,7 @@ class Agent:
     def _submit_payment(self) -> dict[str, str]:
         """Submit one validated payment and make the result idempotent."""
 
+        preserve_card_context = False
         try:
             payment_result = self._perform_payment()
             if (
@@ -1000,6 +1001,7 @@ class Agent:
                 PaymentStatus.INVALID_CVV,
                 PaymentStatus.INVALID_EXPIRY,
             }:
+                preserve_card_context = True
                 return self._handle_retryable_payment_failure(payment_result.status)
             self._state = _ConversationState.PAYMENT_FAILED
             if payment_result.status in {
@@ -1017,9 +1019,10 @@ class Agent:
             self._close_payment_conversation()
             return {"message": self._PAYMENT_FAILURE_MESSAGE}
         finally:
-            # Raw card data must not survive the payment attempt, regardless
-            # of the transport or response outcome.
-            self._reset_card_context()
+            # Retryable API failures keep the collected card data available so
+            # the user can correct only the field the server rejected.
+            if not preserve_card_context:
+                self._reset_card_context()
 
     def _handle_retryable_payment_failure(
         self, status: PaymentStatus

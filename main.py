@@ -45,6 +45,8 @@ def run_cli(
             return 0
         response = agent.next(user_input)
         print(f"Agent: {response['message']}", file=output_stream)
+        if response["message"].startswith("Payment successful."):
+            return 0
 
 
 def _parser() -> argparse.ArgumentParser:
