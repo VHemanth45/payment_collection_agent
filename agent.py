@@ -74,6 +74,30 @@ class Agent:
     _PAYMENT_FAILURE_MESSAGE = (
         "I couldn't complete the payment. Please try again later."
     )
+    _PAYMENT_UNCONFIRMED_MESSAGE = (
+        "I couldn't confirm the payment status. Please contact support before "
+        "trying again."
+    )
+    _PAYMENT_RETRY_LIMIT_MESSAGE = (
+        "I couldn't complete the payment after three attempts. "
+        "This conversation is now closed."
+    )
+    _INSUFFICIENT_BALANCE_MESSAGE = (
+        "That amount is not available against the account balance. "
+        "Please provide a smaller payment amount."
+    )
+    _INVALID_CARD_PAYMENT_MESSAGE = (
+        "The card number was not accepted. Please provide a different card "
+        "number and the card details again."
+    )
+    _INVALID_CVV_PAYMENT_MESSAGE = (
+        "The CVV was not accepted. Please provide the card details again with "
+        "a valid CVV."
+    )
+    _INVALID_EXPIRY_PAYMENT_MESSAGE = (
+        "The expiry date was not accepted. Please provide the card details "
+        "again with a valid expiry date."
+    )
     _ZERO_BALANCE_MESSAGE = (
         "Your outstanding balance is ₹0.00. There is no payment amount to collect."
     )
@@ -154,6 +178,8 @@ class Agent:
         self._invalid_expiry = False
         self._payment_transaction_id: str | None = None
         self._payment_result: PaymentStatus | None = None
+        self._payment_retry_attempts = 0
+        self._payment_retry_exhausted = False
         self._lookup_client = (
             lookup_client
             if lookup_client is not None
@@ -174,6 +200,8 @@ class Agent:
         if self._state is _ConversationState.PAYMENT_COMPLETE:
             return {"message": self._payment_success_message()}
         if self._state is _ConversationState.PAYMENT_FAILED:
+            if self._payment_retry_exhausted:
+                return {"message": self._PAYMENT_RETRY_LIMIT_MESSAGE}
             return {"message": self._PAYMENT_FAILURE_MESSAGE}
 
         if not isinstance(user_input, str) or not user_input.strip():
@@ -382,6 +410,8 @@ class Agent:
         self._reset_card_context()
         self._payment_transaction_id = None
         self._payment_result = None
+        self._payment_retry_attempts = 0
+        self._payment_retry_exhausted = False
 
     def _reset_card_context(self) -> None:
         self._cardholder_name = None
@@ -494,6 +524,7 @@ class Agent:
         """Merge card fields from this turn and advance only when complete."""
 
         candidates = parse_card_input(user_input)
+        complete_attempt = self._card_attempt_is_complete(candidates)
         if candidates.cardholder_name is not None:
             self._cardholder_name = candidates.cardholder_name
             self._invalid_cardholder_name = False
@@ -524,7 +555,17 @@ class Agent:
             self._expiry_year = None
             self._invalid_expiry = True
 
+        has_local_error = any(
+            (
+                candidates.invalid_cardholder_name,
+                candidates.invalid_card_number,
+                candidates.invalid_cvv,
+                candidates.invalid_expiry,
+            )
+        )
         if not self._card_fields_complete():
+            if complete_attempt and has_local_error:
+                return self._record_local_card_failure(candidates)
             return {"message": self._card_collection_message()}
 
         # Keep malformed values out of the eventual payment stage without
@@ -538,10 +579,61 @@ class Agent:
                 expiry_year=self._expiry_year,
             )
         except ValidationError:
-            self._invalid_card_number = True
-            return {"message": self._card_collection_message()}
+            return self._record_local_card_failure(candidates, fallback="card")
 
         return self._submit_payment()
+
+    def _card_attempt_is_complete(self, candidates: Any) -> bool:
+        """Return whether this turn supplies every card field, valid or not."""
+
+        return all(
+            (
+                self._cardholder_name is not None
+                or candidates.cardholder_name is not None
+                or candidates.invalid_cardholder_name,
+                self._card_number is not None
+                or candidates.card_number is not None
+                or candidates.invalid_card_number,
+                self._cvv is not None
+                or candidates.cvv is not None
+                or candidates.invalid_cvv,
+                self._expiry_month is not None
+                or candidates.expiry_month is not None
+                or candidates.invalid_expiry,
+            )
+        )
+
+    def _record_local_card_failure(
+        self, candidates: Any, *, fallback: str | None = None
+    ) -> dict[str, str]:
+        self._payment_retry_attempts += 1
+        message = self._local_card_failure_message(candidates, fallback=fallback)
+        self._reset_card_context()
+        if self._payment_retry_attempts >= 3:
+            self._payment_retry_exhausted = True
+            self._state = _ConversationState.PAYMENT_FAILED
+            return {"message": self._PAYMENT_RETRY_LIMIT_MESSAGE}
+        self._state = _ConversationState.AMOUNT_COLLECTED
+        return {"message": message}
+
+    def _local_card_failure_message(
+        self, candidates: Any, *, fallback: str | None = None
+    ) -> str:
+        fields: list[str] = []
+        if candidates.invalid_card_number or fallback == "card":
+            fields.append("card number")
+        if candidates.invalid_expiry:
+            fields.append("expiry date")
+        if candidates.invalid_cvv:
+            fields.append("CVV")
+        if candidates.invalid_cardholder_name:
+            fields.append("cardholder name")
+        if not fields:
+            return self._CARD_DETAILS_PROMPT
+        if len(fields) == 1:
+            return f"Please provide a valid {fields[0]} and the card details again."
+        requested = ", ".join(fields[:-1]) + f", and {fields[-1]}"
+        return f"Please correct {requested}, then provide the card details again."
 
     def _submit_payment(self) -> dict[str, str]:
         """Submit one validated payment and make the result idempotent."""
@@ -559,7 +651,20 @@ class Agent:
                 return {"message": self._payment_success_message()}
 
             self._payment_result = payment_result.status
+            if payment_result.status in {
+                PaymentStatus.INSUFFICIENT_BALANCE,
+                PaymentStatus.INVALID_AMOUNT,
+                PaymentStatus.INVALID_CARD,
+                PaymentStatus.INVALID_CVV,
+                PaymentStatus.INVALID_EXPIRY,
+            }:
+                return self._handle_retryable_payment_failure(payment_result.status)
             self._state = _ConversationState.PAYMENT_FAILED
+            if payment_result.status in {
+                PaymentStatus.TIMEOUT,
+                PaymentStatus.CONNECTION_ERROR,
+            }:
+                return {"message": self._PAYMENT_UNCONFIRMED_MESSAGE}
             return {"message": self._PAYMENT_FAILURE_MESSAGE}
         except Exception:
             self._payment_result = PaymentStatus.MALFORMED_RESPONSE
@@ -569,6 +674,34 @@ class Agent:
             # Raw card data must not survive the payment attempt, regardless
             # of the transport or response outcome.
             self._reset_card_context()
+
+    def _handle_retryable_payment_failure(
+        self, status: PaymentStatus
+    ) -> dict[str, str]:
+        self._payment_retry_attempts += 1
+        if self._payment_retry_attempts >= 3:
+            self._payment_retry_exhausted = True
+            self._state = _ConversationState.PAYMENT_FAILED
+            return {"message": self._PAYMENT_RETRY_LIMIT_MESSAGE}
+
+        if status in {
+            PaymentStatus.INSUFFICIENT_BALANCE,
+            PaymentStatus.INVALID_AMOUNT,
+        }:
+            self._amount = None
+            self._full_balance_pending = False
+            self._invalid_amount_pending = True
+            self._state = _ConversationState.VERIFIED_NEED_AMOUNT
+            if status is PaymentStatus.INSUFFICIENT_BALANCE:
+                return {"message": self._INSUFFICIENT_BALANCE_MESSAGE}
+            return {"message": self._AMOUNT_CORRECTION_PROMPT}
+
+        self._state = _ConversationState.AMOUNT_COLLECTED
+        if status is PaymentStatus.INVALID_CARD:
+            return {"message": self._INVALID_CARD_PAYMENT_MESSAGE}
+        if status is PaymentStatus.INVALID_CVV:
+            return {"message": self._INVALID_CVV_PAYMENT_MESSAGE}
+        return {"message": self._INVALID_EXPIRY_PAYMENT_MESSAGE}
 
     def _perform_payment(self) -> PaymentResult:
         """Call an injected payment client using the documented card payload."""
@@ -615,6 +748,8 @@ class Agent:
     def _normalize_payment_result(raw_result: Any) -> PaymentResult:
         if isinstance(raw_result, PaymentResult):
             return raw_result
+        if isinstance(raw_result, PaymentStatus):
+            return PaymentResult(status=raw_result)
         if isinstance(raw_result, Mapping):
             transaction_id = raw_result.get("transaction_id")
             if raw_result.get("success") is True:
@@ -624,12 +759,19 @@ class Agent:
                     if isinstance(transaction_id, str)
                     else None,
                 )
-            status_value = raw_result.get("status") or raw_result.get("outcome")
+            status_value = (
+                raw_result.get("status")
+                or raw_result.get("outcome")
+                or raw_result.get("error_code")
+                or raw_result.get("code")
+                or raw_result.get("error")
+            )
             if isinstance(status_value, PaymentStatus):
                 return PaymentResult(status=status_value)
             if isinstance(status_value, str):
                 try:
-                    return PaymentResult(status=PaymentStatus(status_value))
+                    normalized = status_value.strip().lower().replace("-", "_")
+                    return PaymentResult(status=PaymentStatus(normalized))
                 except ValueError:
                     pass
         return PaymentResult(status=PaymentStatus.MALFORMED_RESPONSE)

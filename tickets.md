@@ -110,16 +110,16 @@ These tickets are ordered in dependency order. Each ticket declares its blocking
 
 **Blocked by:** 06 — Process Successful Payments and Close Safely.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] API `insufficient_balance` responses ask for a smaller amount while preserving verified status.
-- [ ] API `invalid_card`, `invalid_cvv`, `invalid_expiry`, and `invalid_amount` responses request the relevant corrected input without echoing sensitive values.
-- [ ] Local invalid card, expiry, CVV, and amount failures count toward the payment retry cap only when they represent complete user-fixable payment attempts.
-- [ ] Three failed complete payment attempts close the conversation and prevent later payment calls.
-- [ ] Unexpected server errors and malformed responses produce safe failure messages without claiming success.
-- [ ] Timeout or ambiguous submission failures are not automatically retried.
-- [ ] Card fields are cleared after failed payment attempts, including exceptions.
-- [ ] Tests assert retry counts, terminal behavior, and no duplicate charge calls.
+- [x] API `insufficient_balance` responses ask for a smaller amount while preserving verified status.
+- [x] API `invalid_card`, `invalid_cvv`, `invalid_expiry`, and `invalid_amount` responses request the relevant corrected input without echoing sensitive values.
+- [x] Local invalid card, expiry, CVV, and amount failures count toward the payment retry cap only when they represent complete user-fixable payment attempts.
+- [x] Three failed complete payment attempts close the conversation and prevent later payment calls.
+- [x] Unexpected server errors and malformed responses produce safe failure messages without claiming success.
+- [x] Timeout or ambiguous submission failures are not automatically retried.
+- [x] Card fields are cleared after failed payment attempts, including exceptions.
+- [x] Tests assert retry counts, terminal behavior, and no duplicate charge calls.
 
 ## 08 — Add Hybrid Free-Form Extraction Without Weakening Determinism
 

@@ -4,7 +4,13 @@ import urllib.error
 from datetime import date
 from decimal import Decimal
 
-from api_client import AccountLookupResult, ApiClient, LookupStatus, PaymentStatus
+from api_client import (
+    AccountLookupResult,
+    ApiClient,
+    LookupStatus,
+    PaymentResult,
+    PaymentStatus,
+)
 from agent import Agent
 
 
@@ -488,6 +494,132 @@ class PaymentCompletionTests(unittest.TestCase):
         self.assertIsNone(agent._cvv)
         self.assertIsNone(agent._expiry_month)
         self.assertIsNone(agent._expiry_year)
+
+
+class PaymentFailureTests(unittest.TestCase):
+    class SequencedClient:
+        def __init__(self, results):
+            self.results = list(results)
+            self.payment_calls = []
+
+        def lookup_account(self, account_id):
+            return {
+                "account_id": account_id,
+                "full_name": "Nithin Jain",
+                "dob": "1990-05-14",
+                "balance": 1250.75,
+            }
+
+        def process_payment(self, payload):
+            self.payment_calls.append(payload)
+            return self.results.pop(0)
+
+    @staticmethod
+    def _card_turn():
+        return (
+            "cardholder name: Someone Else, card number: 4532-0151-1283-0366, "
+            "CVV: 123, expiry: 12/27"
+        )
+
+    def _amount_collected_agent(self, results):
+        client = self.SequencedClient(results)
+        agent = Agent(client)
+        for turn in ("ACC1001", "Nithin Jain", "DOB 1990-05-14", "500"):
+            agent.next(turn)
+        return agent, client
+
+    def test_insufficient_balance_preserves_verified_flow_for_smaller_amount(self) -> None:
+        agent, client = self._amount_collected_agent(
+            [
+                PaymentResult(status=PaymentStatus.INSUFFICIENT_BALANCE),
+                {"success": True, "transaction_id": "txn_smaller"},
+            ]
+        )
+
+        response = agent.next(self._card_turn())
+        self.assertIn("smaller", response["message"])
+        self.assertEqual(agent._state.name, "VERIFIED_NEED_AMOUNT")
+        self.assertIsNone(agent._card_number)
+
+        self.assertEqual(agent.next("400"), {"message": Agent._AMOUNT_ACCEPTED_MESSAGE})
+        success = agent.next(self._card_turn())
+        self.assertIn("txn_smaller", success["message"])
+        self.assertEqual(len(client.payment_calls), 2)
+
+    def test_api_invalid_card_requests_correction_without_echoing_card_data(self) -> None:
+        agent, client = self._amount_collected_agent(
+            [
+                PaymentResult(status=PaymentStatus.INVALID_CARD),
+                {"success": True, "transaction_id": "txn_corrected"},
+            ]
+        )
+
+        response = agent.next(self._card_turn())
+        self.assertIn("card number", response["message"])
+        self.assertNotIn("4532015112830366", response["message"])
+        self.assertNotIn("123", response["message"])
+        self.assertIsNone(agent._card_number)
+
+        success = agent.next(self._card_turn())
+        self.assertIn("txn_corrected", success["message"])
+        self.assertEqual(len(client.payment_calls), 2)
+
+    def test_three_retryable_failures_close_and_block_later_payment_calls(self) -> None:
+        agent, client = self._amount_collected_agent(
+            [
+                PaymentResult(status=PaymentStatus.INVALID_CVV),
+                PaymentResult(status=PaymentStatus.INVALID_CVV),
+                PaymentResult(status=PaymentStatus.INVALID_CVV),
+            ]
+        )
+
+        for attempt in range(3):
+            response = agent.next(self._card_turn())
+            if attempt < 2:
+                self.assertIn("CVV", response["message"])
+            else:
+                self.assertEqual(
+                    response, {"message": Agent._PAYMENT_RETRY_LIMIT_MESSAGE}
+                )
+
+        self.assertEqual(len(client.payment_calls), 3)
+        self.assertEqual(
+            agent.next(self._card_turn()),
+            {"message": Agent._PAYMENT_RETRY_LIMIT_MESSAGE},
+        )
+        self.assertEqual(len(client.payment_calls), 3)
+
+    def test_timeout_is_terminal_and_is_not_retried(self) -> None:
+        agent, client = self._amount_collected_agent(
+            [PaymentResult(status=PaymentStatus.TIMEOUT)]
+        )
+
+        response = agent.next(self._card_turn())
+        self.assertEqual(response, {"message": Agent._PAYMENT_UNCONFIRMED_MESSAGE})
+        self.assertIsNone(agent._card_number)
+        self.assertEqual(
+            agent.next(self._card_turn()),
+            {"message": Agent._PAYMENT_FAILURE_MESSAGE},
+        )
+        self.assertEqual(len(client.payment_calls), 1)
+
+    def test_complete_local_card_failure_counts_but_does_not_call_payment_api(self) -> None:
+        agent, client = self._amount_collected_agent(
+            [{"success": True, "transaction_id": "txn_after_correction"}]
+        )
+
+        invalid = agent.next(
+            "cardholder name: Someone Else, card number: 4111 1111 1111 1112, "
+            "CVV: 12, expiry: 01/25"
+        )
+        self.assertIn("card number", invalid["message"])
+        self.assertEqual(agent._payment_retry_attempts, 1)
+        self.assertEqual(client.payment_calls, [])
+        self.assertIsNone(agent._card_number)
+
+        success = agent.next(self._card_turn())
+        self.assertIn("txn_after_correction", success["message"])
+        self.assertEqual(len(client.payment_calls), 1)
 
 
 class ApiClientTests(unittest.TestCase):
