@@ -6,11 +6,14 @@ from enum import Enum, auto
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Callable, Mapping
 
+from pydantic import ValidationError
+
 from api_client import (
     AccountLookupResult,
     ApiClient,
     LookupStatus,
 )
+from models import AccountRecord, ValidatedPaymentAmount
 from parsers import (
     contains_account_reference,
     extract_account_ids,
@@ -114,7 +117,7 @@ class Agent:
 
         self._state = _ConversationState.NEED_ACCOUNT
         self._account_id: str | None = None
-        self._account: Mapping[str, Any] | None = None
+        self._account: AccountRecord | None = None
         self._verification_attempts = 0
         self._name_candidate: str | None = None
         self._dob_candidate: str | None = None
@@ -279,10 +282,10 @@ class Agent:
         return self._record_verification_failure()
 
     def _identity_matches_account(self) -> bool:
-        if not isinstance(self._account, Mapping):
+        if not isinstance(self._account, AccountRecord):
             return False
 
-        expected_name = self._account.get("full_name")
+        expected_name = self._account.full_name
         if not isinstance(expected_name, str):
             return False
         if self._normalize_name(expected_name) != self._normalize_name(
@@ -304,9 +307,9 @@ class Agent:
         )
 
     def _canonical_stored_value(self, field: str) -> str | None:
-        if not isinstance(self._account, Mapping):
+        if not isinstance(self._account, AccountRecord):
             return None
-        value = self._account.get(field)
+        value = getattr(self._account, field, None)
         if value is None:
             return None
         return str(value).strip()
@@ -361,9 +364,11 @@ class Agent:
             self._invalid_amount_pending = True
 
     def _balance(self) -> Decimal | None:
-        if not isinstance(self._account, Mapping):
+        if not isinstance(self._account, AccountRecord):
             return None
-        raw_balance = self._account.get("balance", self._account.get("outstanding_balance"))
+        raw_balance = self._account.balance
+        if raw_balance is None:
+            raw_balance = self._account.outstanding_balance
         if raw_balance is None:
             return None
         try:
@@ -415,12 +420,11 @@ class Agent:
 
     @staticmethod
     def _is_valid_amount(amount: Decimal, balance: Decimal) -> bool:
-        return (
-            amount.is_finite()
-            and amount > 0
-            and abs(amount.as_tuple().exponent) <= 2
-            and amount <= balance
-        )
+        try:
+            ValidatedPaymentAmount(amount=amount, balance=balance)
+        except ValidationError:
+            return False
+        return True
 
     def _handle_amount_turn(self) -> dict[str, str]:
         balance = self._balance()
@@ -491,7 +495,7 @@ class Agent:
 
         if payload is None:
             return AccountLookupResult.not_found()
-        if not isinstance(payload, Mapping):
+        if not isinstance(payload, (Mapping, AccountRecord)):
             return AccountLookupResult.malformed()
         if not cls._valid_account_payload(payload, requested_id):
             return AccountLookupResult.malformed()
@@ -501,12 +505,23 @@ class Agent:
     def _valid_account_payload(
         cls, payload: Mapping[str, Any] | None, requested_id: str
     ) -> bool:
-        if not isinstance(payload, Mapping):
+        if not isinstance(payload, (Mapping, AccountRecord)):
             return False
-        if not cls._ACCOUNT_KEYS.intersection(payload):
+        if isinstance(payload, AccountRecord):
+            record = payload
+            supplied_keys = set(payload.model_fields_set)
+        else:
+            if not cls._ACCOUNT_KEYS.intersection(payload):
+                return False
+            try:
+                record = AccountRecord.model_validate(payload)
+            except ValidationError:
+                return False
+            supplied_keys = set(payload)
+        if not cls._ACCOUNT_KEYS.intersection(supplied_keys):
             return False
 
-        returned_id = payload.get("account_id", payload.get("id"))
+        returned_id = record.account_id
         if returned_id is None:
             return True
         return returned_id == requested_id

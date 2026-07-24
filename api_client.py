@@ -6,10 +6,13 @@ import json
 import socket
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
 from enum import Enum
 from decimal import Decimal
 from typing import Any, Callable, Mapping, Protocol
+
+from pydantic import BaseModel, ConfigDict, ValidationError
+
+from models import AccountRecord, PaymentRequest
 
 
 BASE_URL = "https://se-payment-verification-api.service.external.usea2.aws.prodigaltech.com/"
@@ -24,32 +27,33 @@ class LookupStatus(str, Enum):
     UNAVAILABLE = "unavailable"
 
 
-@dataclass(frozen=True)
-class AccountLookupResult:
+class AccountLookupResult(BaseModel):
     """Normalized result returned by an account lookup client."""
 
+    model_config = ConfigDict(frozen=True)
+
     status: LookupStatus
-    account: Mapping[str, Any] | None = None
+    account: AccountRecord | None = None
 
     @classmethod
-    def found(cls, account: Mapping[str, Any]) -> "AccountLookupResult":
-        return cls(LookupStatus.FOUND, account)
+    def found(cls, account: Mapping[str, Any] | AccountRecord) -> "AccountLookupResult":
+        return cls(status=LookupStatus.FOUND, account=account)
 
     @classmethod
     def not_found(cls) -> "AccountLookupResult":
-        return cls(LookupStatus.NOT_FOUND)
+        return cls(status=LookupStatus.NOT_FOUND)
 
     @classmethod
     def timeout(cls) -> "AccountLookupResult":
-        return cls(LookupStatus.TIMEOUT)
+        return cls(status=LookupStatus.TIMEOUT)
 
     @classmethod
     def connection_error(cls) -> "AccountLookupResult":
-        return cls(LookupStatus.CONNECTION_ERROR)
+        return cls(status=LookupStatus.CONNECTION_ERROR)
 
     @classmethod
     def malformed(cls) -> "AccountLookupResult":
-        return cls(LookupStatus.MALFORMED_RESPONSE)
+        return cls(status=LookupStatus.MALFORMED_RESPONSE)
 
 
 class AccountLookupClient(Protocol):
@@ -69,9 +73,10 @@ class PaymentStatus(str, Enum):
     CONNECTION_ERROR = "connection_error"
 
 
-@dataclass(frozen=True)
-class PaymentResult:
+class PaymentResult(BaseModel):
     """Normalized result returned by the payment endpoint."""
+
+    model_config = ConfigDict(frozen=True)
 
     status: PaymentStatus
     transaction_id: str | None = None
@@ -96,7 +101,7 @@ class ApiClient:
 
         response = self._post("api/lookup-account", {"account_id": account_id})
         if isinstance(response, LookupStatus):
-            return AccountLookupResult(response)
+            return AccountLookupResult(status=response)
         if response is None:
             return AccountLookupResult.malformed()
 
@@ -124,13 +129,19 @@ class ApiClient:
             "amount": float(amount),
             "payment_method": {"type": "card", "card": dict(card)},
         }
-        response = self._post("api/process-payment", payload)
+        try:
+            request = PaymentRequest.model_validate(payload)
+        except ValidationError:
+            return PaymentResult(status=PaymentStatus.MALFORMED_RESPONSE)
+        validated_payload = request.model_dump()
+        validated_payload["amount"] = float(request.amount)
+        response = self._post("api/process-payment", validated_payload)
         if response is LookupStatus.TIMEOUT:
-            return PaymentResult(PaymentStatus.TIMEOUT)
+            return PaymentResult(status=PaymentStatus.TIMEOUT)
         if response is LookupStatus.CONNECTION_ERROR:
-            return PaymentResult(PaymentStatus.CONNECTION_ERROR)
+            return PaymentResult(status=PaymentStatus.CONNECTION_ERROR)
         if response is None:
-            return PaymentResult(PaymentStatus.MALFORMED_RESPONSE)
+            return PaymentResult(status=PaymentStatus.MALFORMED_RESPONSE)
 
         status_code, body = response
         if status_code == 200 and isinstance(body, Mapping):
@@ -138,9 +149,10 @@ class ApiClient:
                 body.get("transaction_id"), str
             ):
                 return PaymentResult(
-                    PaymentStatus.SUCCESS, body["transaction_id"]
+                    status=PaymentStatus.SUCCESS,
+                    transaction_id=body["transaction_id"],
                 )
-            return PaymentResult(PaymentStatus.MALFORMED_RESPONSE)
+            return PaymentResult(status=PaymentStatus.MALFORMED_RESPONSE)
 
         if status_code == 422 and isinstance(body, Mapping):
             error_code = body.get("error_code")
@@ -151,8 +163,8 @@ class ApiClient:
                 "invalid_cvv": PaymentStatus.INVALID_CVV,
                 "invalid_expiry": PaymentStatus.INVALID_EXPIRY,
             }.get(error_code, PaymentStatus.MALFORMED_RESPONSE)
-            return PaymentResult(status)
-        return PaymentResult(PaymentStatus.MALFORMED_RESPONSE)
+            return PaymentResult(status=status)
+        return PaymentResult(status=PaymentStatus.MALFORMED_RESPONSE)
 
     def _post(
         self, path: str, payload: Mapping[str, Any]
@@ -201,4 +213,4 @@ class UnavailableLookupClient:
 
     def lookup_account(self, account_id: str) -> AccountLookupResult:
         del account_id
-        return AccountLookupResult(LookupStatus.UNAVAILABLE)
+        return AccountLookupResult(status=LookupStatus.UNAVAILABLE)

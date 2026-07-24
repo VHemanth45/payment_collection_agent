@@ -3,10 +3,20 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from pydantic import ValidationError
+
+from models import (
+    AadhaarLast4,
+    AccountId,
+    AmountCandidates,
+    IdentityCandidates,
+    IdentityDate,
+    NumericAmount,
+    Pincode,
+)
 
 _ACCOUNT_ID_PATTERN = re.compile(
     r"(?<![A-Za-z0-9])A\s*C\s*C\s*[- ]?\s*\d{4}(?![A-Za-z0-9])",
@@ -17,13 +27,10 @@ _ACCOUNT_ID_PATTERN = re.compile(
 def normalize_account_id(value: str) -> str | None:
     """Return the canonical ``ACC####`` form, or ``None`` if invalid."""
 
-    if not isinstance(value, str):
+    try:
+        return AccountId(value=value).value
+    except ValidationError:
         return None
-
-    compact = re.sub(r"[\s-]", "", value).upper()
-    if re.fullmatch(r"ACC\d{4}", compact) is None:
-        return None
-    return compact
 
 
 def extract_account_ids(user_input: str) -> tuple[str, ...]:
@@ -51,33 +58,6 @@ def contains_account_reference(user_input: str) -> bool:
         user_input,
         re.IGNORECASE,
     ) is not None
-
-
-@dataclass(frozen=True)
-class IdentityCandidates:
-    """Fields deterministically recovered from one identity turn."""
-
-    name: str | None = None
-    dob: str | None = None
-    aadhaar_last4: str | None = None
-    pincode: str | None = None
-    invalid_dob: bool = False
-    invalid_aadhaar: bool = False
-    invalid_pincode: bool = False
-
-
-@dataclass(frozen=True)
-class AmountCandidates:
-    """Amount data recovered from one user turn.
-
-    ``amount`` is only populated for a syntactically valid numeric amount.
-    ``full_balance`` represents a request for the looked-up balance and is
-    resolved by the agent because the balance is not known to the parser.
-    """
-
-    amount: Decimal | None = None
-    full_balance: bool = False
-    invalid: bool = False
 
 
 _DOB_LABEL_PATTERN = re.compile(
@@ -228,8 +208,8 @@ def _parse_date_expression(expression: str) -> str | None:
     if year < 100 or month not in range(1, 13):
         return None
     try:
-        return date(year, month, day).isoformat()
-    except ValueError:
+        return IdentityDate(value=date(year, month, day)).value.isoformat()
+    except (ValueError, ValidationError):
         return None
 
 
@@ -249,9 +229,14 @@ def _extract_digit_factor(
     if not match:
         return None, False
     digits = re.sub(r"\D", "", match.group("digits"))
-    if len(digits) != expected_length:
+    try:
+        if expected_length == 4:
+            return AadhaarLast4(value=digits).value, False
+        if expected_length == 6:
+            return Pincode(value=digits).value, False
+    except ValidationError:
         return None, True
-    return digits, False
+    return None, True
 
 
 def parse_identity_input(user_input: str) -> IdentityCandidates:
@@ -331,12 +316,9 @@ def _decimal_amount(value: str) -> Decimal | None:
     if "," in value and re.fullmatch(r"[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?", value) is None:
         return None
     try:
-        amount = Decimal(value.replace(",", ""))
-    except InvalidOperation:
+        return NumericAmount(value=value.replace(",", "")).value
+    except (InvalidOperation, ValidationError):
         return None
-    if not amount.is_finite() or abs(amount.as_tuple().exponent) > 2:
-        return None
-    return amount
 
 
 def _number_words_to_int(words: str) -> int | None:
