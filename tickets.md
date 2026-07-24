@@ -10,13 +10,13 @@ These tickets are ordered in dependency order. Each ticket declares its blocking
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] `Agent.next(user_input)` exists and always returns a dictionary containing a string `message`.
-- [ ] A new conversation asks for an account ID without exposing internal state names.
-- [ ] Blank or irrelevant input produces a deterministic prompt for the next required information.
-- [ ] Conversation state is stored per agent instance and does not leak across separate instances.
-- [ ] Tests exercise the public `Agent.next` seam rather than relying only on private helpers.
+- [x] `Agent.next(user_input)` exists and always returns a dictionary containing a string `message`.
+- [x] A new conversation asks for an account ID without exposing internal state names.
+- [x] Blank or irrelevant input produces a deterministic prompt for the next required information.
+- [x] Conversation state is stored per agent instance and does not leak across separate instances.
+- [x] Tests exercise the public `Agent.next` seam rather than relying only on private helpers.
 
 ## 02 — Add Account ID Extraction, Validation, and Lookup Flow
 
