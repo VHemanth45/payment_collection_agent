@@ -159,12 +159,12 @@ These tickets are ordered in dependency order. Each ticket declares its blocking
 
 **Blocked by:** 08 — Add Hybrid Free-Form Extraction Without Weakening Determinism; 09 — Harden Sensitive-Data Handling and Deterministic Messaging.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] End-to-end tests cover successful full-balance payment, successful partial payment, verification failure lockout, out-of-order input, lookup failures, payment failures, zero-balance behavior, leap-day DOB behavior, repeated post-completion input, blank input, noisy input, and ambiguous input.
-- [ ] Tests record expected versus actual state at each turn where useful without asserting brittle private implementation details.
-- [ ] Tests assert required API calls, forbidden API calls, and redacted payload reporting.
-- [ ] Aggregate evaluation notes cover happy-path success, strict-verification rejection, API-call correctness, retry-limit enforcement, sensitive-data leakage count, and unnecessary re-prompt count.
-- [ ] The interactive CLI lets a developer manually run a conversation against the implemented agent.
-- [ ] Documentation explains setup, usage, sample conversations, design decisions, testing strategy, and any live API smoke-test prerequisites.
-- [ ] The documented behavior remains consistent with `spec.md`.
+- [x] End-to-end tests cover successful full-balance payment, successful partial payment, verification failure lockout, out-of-order input, lookup failures, payment failures, zero-balance behavior, leap-day DOB behavior, repeated post-completion input, blank input, noisy input, and ambiguous input.
+- [x] Tests record expected versus actual state at each turn where useful without asserting brittle private implementation details.
+- [x] Tests assert required API calls, forbidden API calls, and redacted payload reporting.
+- [x] Aggregate evaluation notes cover happy-path success, strict-verification rejection, API-call correctness, retry-limit enforcement, sensitive-data leakage count, and unnecessary re-prompt count.
+- [x] The interactive CLI lets a developer manually run a conversation against the implemented agent.
+- [x] Documentation explains setup, usage, sample conversations, design decisions, testing strategy, and any live API smoke-test prerequisites.
+- [x] The documented behavior remains consistent with `spec.md`.

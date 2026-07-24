@@ -7,3 +7,19 @@ requires-python = ">=3.14"
 dependencies = [
     "pydantic>=2.0,<3.0",
 ]
+
+[project.scripts]
+payment-collection-agent = "main:main"
+
+[tool.setuptools]
+py-modules = [
+    "agent",
+    "api_client",
+    "evaluation",
+    "extractor",
+    "main",
+    "messages",
+    "models",
+    "parsers",
+    "redaction",
+]
