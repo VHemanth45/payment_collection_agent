@@ -217,6 +217,17 @@ def _parse_date_expression(expression: str) -> str | None:
 def _extract_dob(user_input: str) -> tuple[str | None, bool]:
     match = _DATE_PATTERN.search(user_input)
     if match:
+        # Card expiry dates are structurally date-like but are not identity
+        # data.  This matters when the hybrid pipeline runs all fast-path
+        # parsers on every turn.
+        prefix = user_input[: match.start()]
+        if re.search(
+            r"\b(?:exp(?:iry|iration)?|expires?|valid\s*(?:thru|through))\b"
+            r"\s*(?:is|:|-)?\s*$",
+            prefix,
+            re.IGNORECASE,
+        ):
+            return None, False
         expression = match.group(0)
         canonical = _parse_date_expression(expression)
         return canonical, canonical is None
@@ -246,9 +257,14 @@ def parse_identity_input(user_input: str) -> IdentityCandidates:
     if not isinstance(user_input, str):
         return IdentityCandidates()
 
-    name_match = _NAME_LABEL_PATTERN.search(user_input) or _I_AM_NAME_PATTERN.search(
-        user_input
-    )
+    name_match = _NAME_LABEL_PATTERN.search(user_input)
+    if name_match and re.search(
+        r"\b(?:cardholder|name\s+on\s+card)\s*$",
+        user_input[: name_match.start()],
+        re.IGNORECASE,
+    ):
+        name_match = None
+    name_match = name_match or _I_AM_NAME_PATTERN.search(user_input)
     name = clean_name(name_match.group("value")) if name_match else None
 
     dob, invalid_dob = _extract_dob(user_input)
@@ -263,6 +279,12 @@ def parse_identity_input(user_input: str) -> IdentityCandidates:
         date_match = _DATE_PATTERN.search(user_input)
         if date_match:
             prefix = user_input[: date_match.start()].strip(" \t,;:-")
+            if re.search(
+                r"\b(?:exp(?:iry|iration)?|expires?|valid\s*(?:thru|through))\b\s*$",
+                prefix,
+                re.IGNORECASE,
+            ):
+                prefix = ""
             prefix = re.sub(
                 r"(?:,|\band\s+)?\s*(?:my\s+)?(?:date\s+of\s+birth|dob)\s*(?:is|:)?\s*$",
                 "",
@@ -290,6 +312,13 @@ def parse_identity_input(user_input: str) -> IdentityCandidates:
             if (
                 name is None
                 and not factor_match
+                and not re.search(
+                    r"\b(?:cardholder|card\s*(?:number|no\.?|#)|number\s+on\s+card|"
+                    r"cvv|cvc|security\s+code|exp(?:iry|iration)?|expires?|"
+                    r"valid\s*(?:thru|through))\b",
+                    user_input,
+                    re.IGNORECASE,
+                )
                 and re.search(r"[A-Za-z]", user_input)
                 and not (
                     extract_account_ids(user_input)

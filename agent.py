@@ -22,7 +22,6 @@ from models import AccountRecord, PaymentCard, ValidatedPaymentAmount
 from extractor import (
     EXTRACTION_SCHEMAS,
     ExtractionGroup,
-    ExtractionRequest,
     extraction_request,
     structured_fields,
 )
