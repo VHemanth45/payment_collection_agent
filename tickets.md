@@ -144,14 +144,14 @@ These tickets are ordered in dependency order. Each ticket declares its blocking
 
 **Blocked by:** 07 — Handle Recoverable and Terminal Payment Failures.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Balance disclosure, verification failures, payment success, API errors, retry-limit messages, and closed-conversation messages are generated from deterministic templates.
-- [ ] No user-facing message contains DOB, Aadhaar last four, pincode, CVV, or full card number.
-- [ ] If operational logging exists, card numbers are masked and CVV is never logged.
-- [ ] Test failure output and call-trace reports redact card numbers and omit CVV.
-- [ ] Closed and completed conversations use deterministic responses and make no further lookup or payment calls.
-- [ ] Sensitive-data cleanup is verified for success, recoverable failure, terminal failure, and exception paths.
+- [x] Balance disclosure, verification failures, payment success, API errors, retry-limit messages, and closed-conversation messages are generated from deterministic templates.
+- [x] No user-facing message contains DOB, Aadhaar last four, pincode, CVV, or full card number.
+- [x] If operational logging exists, card numbers are masked and CVV is never logged.
+- [x] Test failure output and call-trace reports redact card numbers and omit CVV.
+- [x] Closed and completed conversations use deterministic responses and make no further lookup or payment calls.
+- [x] Sensitive-data cleanup is verified for success, recoverable failure, terminal failure, and exception paths.
 
 ## 10 — Complete End-to-End Evaluation Coverage and CLI Documentation
 

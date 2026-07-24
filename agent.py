@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, auto
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation
 import inspect
 import re
 from typing import Any, Callable, Mapping
@@ -18,6 +18,7 @@ from api_client import (
     PaymentResult,
     PaymentStatus,
 )
+import messages as _messages
 from models import AccountRecord, PaymentCard, ValidatedPaymentAmount
 from extractor import (
     EXTRACTION_SCHEMAS,
@@ -62,92 +63,34 @@ class _RegexTurn:
 class Agent:
     """Process one user turn at a time for a payment conversation."""
 
-    _ACCOUNT_PROMPT = "Please provide your account ID to get started."
-    _ACCOUNT_CORRECTION_PROMPT = (
-        "Please provide one valid account ID in the format ACC####, "
-        "for example, ACC1001."
-    )
-    _AMBIGUOUS_ACCOUNT_PROMPT = (
-        "I found more than one possible account ID. Please send one account ID "
-        "in the format ACC####."
-    )
-    _FULL_NAME_PROMPT = "Thanks. Please provide your full name for verification."
-    _SECONDARY_FACTOR_PROMPT = (
-        "Please provide one verification detail: your date of birth, "
-        "Aadhaar last four digits, or six-digit pincode."
-    )
-    _INVALID_SECONDARY_FACTOR_PROMPT = (
-        "Please provide a valid date of birth with a four-digit year, "
-        "exactly four Aadhaar last-four digits, or a six-digit pincode."
-    )
-    _VERIFIED_MESSAGE = "Your identity has been verified."
-    _AMOUNT_PROMPT = "Please provide the amount you would like to pay."
-    _AMOUNT_CORRECTION_PROMPT = (
-        "Please provide a payment amount greater than ₹0.00, no more than the "
-        "outstanding balance, and with no more than two decimal places."
-    )
-    _AMOUNT_ACCEPTED_MESSAGE = "Your payment amount has been recorded."
-    _CARD_DETAILS_PROMPT = (
-        "Please provide your cardholder name, card number, CVV, and expiry date."
-    )
-    _CARD_DETAILS_ACCEPTED_MESSAGE = "Your card details have been recorded."
-    _PAYMENT_FAILURE_MESSAGE = (
-        "I couldn't complete the payment. Please try again later."
-    )
-    _PAYMENT_UNCONFIRMED_MESSAGE = (
-        "I couldn't confirm the payment status. Please contact support before "
-        "trying again."
-    )
-    _PAYMENT_RETRY_LIMIT_MESSAGE = (
-        "I couldn't complete the payment after three attempts. "
-        "This conversation is now closed."
-    )
-    _INSUFFICIENT_BALANCE_MESSAGE = (
-        "That amount is not available against the account balance. "
-        "Please provide a smaller payment amount."
-    )
-    _INVALID_CARD_PAYMENT_MESSAGE = (
-        "The card number was not accepted. Please provide a different card "
-        "number and the card details again."
-    )
-    _INVALID_CVV_PAYMENT_MESSAGE = (
-        "The CVV was not accepted. Please provide the card details again with "
-        "a valid CVV."
-    )
-    _INVALID_EXPIRY_PAYMENT_MESSAGE = (
-        "The expiry date was not accepted. Please provide the card details "
-        "again with a valid expiry date."
-    )
-    _ZERO_BALANCE_MESSAGE = (
-        "Your outstanding balance is ₹0.00. There is no payment amount to collect."
-    )
-    _BALANCE_UNAVAILABLE_MESSAGE = (
-        "Your identity has been verified, but I couldn't retrieve a valid "
-        "outstanding balance. Please try again later."
-    )
-    _VERIFICATION_FAILURE_MESSAGE = (
-        "Those details did not match our records. Please provide your full "
-        "name and one verification detail again."
-    )
-    _VERIFICATION_LOCKED_MESSAGE = (
-        "I couldn't verify your identity after three attempts. "
-        "This conversation is now closed."
-    )
-    _UNKNOWN_ACCOUNT_MESSAGE = (
-        "I couldn't find that account ID. Please check it and send it again."
-    )
-    _TIMEOUT_MESSAGE = (
-        "I couldn't retrieve that account right now. Please try again later."
-    )
-    _CONNECTION_MESSAGE = (
-        "I couldn't connect to the account service. Please try again later."
-    )
-    _MALFORMED_RESPONSE_MESSAGE = (
-        "The account service returned an unexpected response. Please try again later."
-    )
-    _UNAVAILABLE_MESSAGE = (
-        "Account lookup is temporarily unavailable. Please try again later."
-    )
+    _ACCOUNT_PROMPT = _messages.ACCOUNT_PROMPT
+    _ACCOUNT_CORRECTION_PROMPT = _messages.ACCOUNT_CORRECTION_PROMPT
+    _AMBIGUOUS_ACCOUNT_PROMPT = _messages.AMBIGUOUS_ACCOUNT_PROMPT
+    _FULL_NAME_PROMPT = _messages.FULL_NAME_PROMPT
+    _SECONDARY_FACTOR_PROMPT = _messages.SECONDARY_FACTOR_PROMPT
+    _INVALID_SECONDARY_FACTOR_PROMPT = _messages.INVALID_SECONDARY_FACTOR_PROMPT
+    _VERIFIED_MESSAGE = _messages.VERIFIED_MESSAGE
+    _AMOUNT_PROMPT = _messages.AMOUNT_PROMPT
+    _AMOUNT_CORRECTION_PROMPT = _messages.AMOUNT_CORRECTION_PROMPT
+    _AMOUNT_ACCEPTED_MESSAGE = _messages.AMOUNT_ACCEPTED_MESSAGE
+    _CARD_DETAILS_PROMPT = _messages.CARD_DETAILS_PROMPT
+    _CARD_DETAILS_ACCEPTED_MESSAGE = _messages.CARD_DETAILS_ACCEPTED_MESSAGE
+    _PAYMENT_FAILURE_MESSAGE = _messages.PAYMENT_FAILURE_MESSAGE
+    _PAYMENT_UNCONFIRMED_MESSAGE = _messages.PAYMENT_UNCONFIRMED_MESSAGE
+    _PAYMENT_RETRY_LIMIT_MESSAGE = _messages.PAYMENT_RETRY_LIMIT_MESSAGE
+    _INSUFFICIENT_BALANCE_MESSAGE = _messages.INSUFFICIENT_BALANCE_MESSAGE
+    _INVALID_CARD_PAYMENT_MESSAGE = _messages.INVALID_CARD_PAYMENT_MESSAGE
+    _INVALID_CVV_PAYMENT_MESSAGE = _messages.INVALID_CVV_PAYMENT_MESSAGE
+    _INVALID_EXPIRY_PAYMENT_MESSAGE = _messages.INVALID_EXPIRY_PAYMENT_MESSAGE
+    _ZERO_BALANCE_MESSAGE = _messages.ZERO_BALANCE_MESSAGE
+    _BALANCE_UNAVAILABLE_MESSAGE = _messages.BALANCE_UNAVAILABLE_MESSAGE
+    _VERIFICATION_FAILURE_MESSAGE = _messages.VERIFICATION_FAILURE_MESSAGE
+    _VERIFICATION_LOCKED_MESSAGE = _messages.VERIFICATION_LOCKED_MESSAGE
+    _UNKNOWN_ACCOUNT_MESSAGE = _messages.UNKNOWN_ACCOUNT_MESSAGE
+    _TIMEOUT_MESSAGE = _messages.TIMEOUT_MESSAGE
+    _CONNECTION_MESSAGE = _messages.CONNECTION_MESSAGE
+    _MALFORMED_RESPONSE_MESSAGE = _messages.MALFORMED_RESPONSE_MESSAGE
+    _UNAVAILABLE_MESSAGE = _messages.UNAVAILABLE_MESSAGE
 
     _ACCOUNT_KEYS = frozenset(
         {
@@ -775,6 +718,7 @@ class Agent:
         self._reset_verification_candidates()
         if self._verification_attempts >= 3:
             self._state = _ConversationState.CLOSED_FAILURE
+            self._clear_account_secrets()
             return {"message": self._VERIFICATION_LOCKED_MESSAGE}
         return {"message": self._VERIFICATION_FAILURE_MESSAGE}
 
@@ -812,6 +756,18 @@ class Agent:
         self._invalid_cvv = False
         self._invalid_expiry = False
 
+    def _clear_account_secrets(self) -> None:
+        """Drop stored identity/account data after a terminal conversation."""
+
+        self._account = None
+        self._reset_verification_candidates()
+
+    def _close_payment_conversation(self) -> None:
+        """Clear sensitive context while retaining safe terminal recap data."""
+
+        self._clear_account_secrets()
+        self._reset_card_context()
+
     def _capture_amount_input(
         self, user_input: str, *, allow_plain_number: bool = False
     ) -> None:
@@ -847,8 +803,7 @@ class Agent:
 
     @staticmethod
     def _format_amount(amount: Decimal) -> str:
-        display = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        return f"₹{display:.2f}"
+        return _messages.format_amount(amount)
 
     def _amount_collection_message(self) -> str:
         balance = self._balance()
@@ -857,7 +812,6 @@ class Agent:
             # records. Keep verification behavior stable for those clients;
             # amount validation still requires a real balance.
             return self._VERIFIED_MESSAGE
-        formatted_balance = self._format_amount(balance)
         if balance == 0:
             return self._ZERO_BALANCE_MESSAGE
         pending_amount = self._resolve_pending_amount()
@@ -865,19 +819,14 @@ class Agent:
             pending_amount, balance
         ):
             self._state = _ConversationState.AMOUNT_COLLECTED
-            return (
-                f"{self._VERIFIED_MESSAGE} Your outstanding balance is "
-                f"{formatted_balance}. {self._AMOUNT_ACCEPTED_MESSAGE}"
+            return _messages.balance_message(
+                balance, self._AMOUNT_ACCEPTED_MESSAGE
             )
         if self._invalid_amount_pending or pending_amount is not None:
-            return (
-                f"{self._VERIFIED_MESSAGE} Your outstanding balance is "
-                f"{formatted_balance}. {self._AMOUNT_CORRECTION_PROMPT}"
+            return _messages.balance_message(
+                balance, self._AMOUNT_CORRECTION_PROMPT
             )
-        return (
-            f"{self._VERIFIED_MESSAGE} Your outstanding balance is "
-            f"{formatted_balance}. {self._AMOUNT_PROMPT}"
-        )
+        return _messages.balance_message(balance, self._AMOUNT_PROMPT)
 
     def _resolve_pending_amount(self) -> Decimal | None:
         if self._full_balance_pending:
@@ -1000,6 +949,7 @@ class Agent:
         if self._payment_retry_attempts >= 3:
             self._payment_retry_exhausted = True
             self._state = _ConversationState.PAYMENT_FAILED
+            self._close_payment_conversation()
             return {"message": self._PAYMENT_RETRY_LIMIT_MESSAGE}
         self._state = _ConversationState.AMOUNT_COLLECTED
         return {"message": message}
@@ -1018,10 +968,7 @@ class Agent:
             fields.append("cardholder name")
         if not fields:
             return self._CARD_DETAILS_PROMPT
-        if len(fields) == 1:
-            return f"Please provide a valid {fields[0]} and the card details again."
-        requested = ", ".join(fields[:-1]) + f", and {fields[-1]}"
-        return f"Please correct {requested}, then provide the card details again."
+        return _messages.local_card_failure_message(fields, fallback=fallback)
 
     def _submit_payment(self) -> dict[str, str]:
         """Submit one validated payment and make the result idempotent."""
@@ -1036,7 +983,9 @@ class Agent:
                 self._payment_transaction_id = payment_result.transaction_id.strip()
                 self._payment_result = PaymentStatus.SUCCESS
                 self._state = _ConversationState.PAYMENT_COMPLETE
-                return {"message": self._payment_success_message()}
+                message = self._payment_success_message()
+                self._close_payment_conversation()
+                return {"message": message}
 
             self._payment_result = payment_result.status
             if payment_result.status in {
@@ -1052,11 +1001,15 @@ class Agent:
                 PaymentStatus.TIMEOUT,
                 PaymentStatus.CONNECTION_ERROR,
             }:
-                return {"message": self._PAYMENT_UNCONFIRMED_MESSAGE}
-            return {"message": self._PAYMENT_FAILURE_MESSAGE}
+                message = self._PAYMENT_UNCONFIRMED_MESSAGE
+            else:
+                message = self._PAYMENT_FAILURE_MESSAGE
+            self._close_payment_conversation()
+            return {"message": message}
         except Exception:
             self._payment_result = PaymentStatus.MALFORMED_RESPONSE
             self._state = _ConversationState.PAYMENT_FAILED
+            self._close_payment_conversation()
             return {"message": self._PAYMENT_FAILURE_MESSAGE}
         finally:
             # Raw card data must not survive the payment attempt, regardless
@@ -1070,6 +1023,7 @@ class Agent:
         if self._payment_retry_attempts >= 3:
             self._payment_retry_exhausted = True
             self._state = _ConversationState.PAYMENT_FAILED
+            self._close_payment_conversation()
             return {"message": self._PAYMENT_RETRY_LIMIT_MESSAGE}
 
         if status in {
@@ -1097,7 +1051,7 @@ class Agent:
         if not isinstance(self._account_id, str) or self._amount is None:
             return PaymentResult(status=PaymentStatus.MALFORMED_RESPONSE)
 
-        amount = self._amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        amount = self._amount.quantize(Decimal("0.01"))
         card = {
             "cardholder_name": self._cardholder_name,
             "card_number": self._card_number,
@@ -1168,11 +1122,7 @@ class Agent:
         transaction_id = self._payment_transaction_id or ""
         account_id = self._account_id or ""
         amount = self._amount or Decimal("0")
-        return (
-            f"Payment successful. Transaction ID: {transaction_id}. "
-            f"Account ID: {account_id}. Amount: {self._format_amount(amount)}. "
-            "Status: successful."
-        )
+        return _messages.payment_success(transaction_id, account_id, amount)
 
     def _card_fields_complete(self) -> bool:
         return (
