@@ -25,6 +25,8 @@ class AgentConversationTests(unittest.TestCase):
         self.assertIn("account ID", response["message"])
         self.assertNotIn("NEED_ACCOUNT", response["message"])
 
+        self.assertIn("Hello", response["message"])
+
 
     def test_blank_input_returns_a_deterministic_actionable_prompt(self) -> None:
         agent = Agent()

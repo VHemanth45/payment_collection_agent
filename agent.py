@@ -68,6 +68,7 @@ class Agent:
     """Process one user turn at a time for a payment conversation."""
 
     _ACCOUNT_PROMPT = _messages.ACCOUNT_PROMPT
+    _GREETING_PROMPT = _messages.GREETING_PROMPT
     _ACCOUNT_CORRECTION_PROMPT = _messages.ACCOUNT_CORRECTION_PROMPT
     _AMBIGUOUS_ACCOUNT_PROMPT = _messages.AMBIGUOUS_ACCOUNT_PROMPT
     _FULL_NAME_PROMPT = _messages.FULL_NAME_PROMPT
@@ -232,6 +233,8 @@ class Agent:
             # first lookup and clears them on a failed lookup.
             self._merge_regex_turn(regex_turn)
             if len(account_ids) == 0:
+                if self._is_greeting(user_input):
+                    return {"message": self._GREETING_PROMPT}
                 return {"message": self._ACCOUNT_CORRECTION_PROMPT}
             # An account-only turn must not be sent to the identity extractor:
             # a model can hallucinate a name from an account ID and make the
@@ -709,6 +712,18 @@ class Agent:
                 candidates.invalid_pincode,
             )
         )
+
+    @staticmethod
+    def _is_greeting(user_input: str) -> bool:
+        """Recognize a short greeting while the conversation is starting."""
+
+        if not isinstance(user_input, str):
+            return False
+        return re.fullmatch(
+            r"(?:hi|hello|hey|good\s+(?:morning|afternoon|evening))[!,.\s]*",
+            user_input.strip(),
+            re.IGNORECASE,
+        ) is not None
 
     def _handle_account_id(self, account_id: str) -> dict[str, str]:
         pending_input = None

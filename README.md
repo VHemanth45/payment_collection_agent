@@ -167,7 +167,7 @@ Agent: What is the CVV? Enter 3 or 4 digits.
 You: 123
 Agent: What is the card expiry date? Use MM/YYYY.
 You: 12/2030
-Agent: Payment successful. Transaction ID: txn_****7642_j0ldfd6. Account ID: ACC1004. Amount: ₹500.00. Status: successful.
+Agent: Payment successful. Transaction ID: txn_1849953950642_j0ldfd6. Account ID: ACC1004. Amount: ₹500.00. Status: successful.
 ```
 
 ### Example 6: LLM fallback for a natural-language DOB
@@ -191,7 +191,7 @@ Agent: What is the CVV? Enter 3 or 4 digits.
 You: CVV is one two three
 Agent: What is the card expiry date? Use MM/YYYY.
 You: expires December 2027
-Agent: Payment successful. Transaction ID: txn_****7607_zlozaqj. Account ID: ACC1002. Amount: ₹100.00. Status: successful.
+Agent: Payment successful. Transaction ID: txn_1784993894444_jbdkwxr. Account ID: ACC1002. Amount: ₹100.00. Status: successful.
 ```
 
 ### Example 7: Invalid CVV retry limit

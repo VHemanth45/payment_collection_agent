@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
 
-from redaction import redact_text
-
-
 ACCOUNT_PROMPT = "Let's get started. What is your account ID? (Example: ACC1002)"
+GREETING_PROMPT = (
+    "Hello! Let's get started. What is your account ID? "
+    "(Example: ACC1002)"
+)
 ACCOUNT_CORRECTION_PROMPT = (
     "I couldn't read that as one account ID. Please enter one in the ACC#### "
     "format, like ACC1002."
@@ -125,9 +126,8 @@ def balance_message(balance: Decimal, suffix: str) -> str:
 def payment_success(transaction_id: str, account_id: str, amount: Decimal) -> str:
     """Build the fixed, secret-free successful-payment recap."""
 
-    safe_transaction_id = redact_text(transaction_id)
     return (
-        f"Payment successful. Transaction ID: {safe_transaction_id}. "
+        f"Payment successful. Transaction ID: {transaction_id}. "
         f"Account ID: {account_id}. Amount: {format_amount(amount)}. "
         "Status: successful."
     )

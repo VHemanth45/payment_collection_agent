@@ -1,4 +1,4 @@
-[project]
+        [project]
 name = "payment-collection-agent"
 version = "0.1.0"
 description = "Add your description here"
