@@ -6,7 +6,7 @@ payment clients are injectable, so the same conversation can be tested without
 network access.
 
 
-![Sequence Diagram](diagram-export-7-25-2026-6_27_17-PM.png)
+![Sequence Diagram](diagram-export-7-25-2026-8_46_56-PM.png)
 
 
 
