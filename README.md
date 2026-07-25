@@ -278,28 +278,3 @@ leap-day dates, repeated completion input, blank/noisy/ambiguous input, API
 call ordering, and redacted payload reports. Assertions use public responses
 and observable fake-service calls; private state names are not part of the
 evaluation contract.
-
-## Design decisions
-
-- The finite-state conversation keeps account lookup, verification, balance
-  disclosure, amount validation, card validation, and payment submission in a
-  fixed safe order.
-- Regex/normalization runs first on every turn. The optional schema-bound
-  extractor can fill missing fields, but cannot decide verification or payment
-  eligibility.
-- When deterministic parsing leaves required fields missing, an injected
-  extractor is invoked for the relevant schema group. The CLI does not make
-  unsolicited model/network calls; provide an extractor client explicitly when
-  LLM fallback is configured.
-- Full name matching is exact after whitespace cleanup. One exact DOB, Aadhaar
-  suffix, or pincode is also required. Three complete failures close the
-  conversation.
-- Amounts use `Decimal`; card numbers are normalized and Luhn checked; expiry
-  and CVV are validated locally before payment.
-- User-facing templates never echo identity secrets, CVVs, or full card
-  numbers. Reports mask card numbers and omit CVVs.
-- Card data is cleared after every payment attempt, including exceptions, and
-  completed or ambiguous conversations do not automatically submit again.
-
-See [`spec.md`](spec.md) for the full behavioral contract and [`tickets.md`](tickets.md)
-for the implementation ticket history.
