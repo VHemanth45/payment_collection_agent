@@ -14,6 +14,8 @@ class LookupAndPaymentClient:
             "account_id": account_id,
             "full_name": "Nithin Jain",
             "dob": "1990-05-14",
+            "aadhaar_last4": "4321",
+            "pincode": "400001",
             "balance": 1250.75,
         }
 
@@ -168,6 +170,30 @@ class HybridExtractionTests(unittest.TestCase):
             client.payment_calls[0]["payment_method"]["card"]["card_number"],
             "4532015112830366",
         )
+
+    def test_simple_invalid_card_number_does_not_call_extractor(self):
+        extractor = RecordingExtractor()
+        client = LookupAndPaymentClient()
+        agent = Agent(client, extractor=extractor)
+        for turn in ("ACC1001", "Nithin Jain", "4321", "500", "hemanth"):
+            agent.next(turn)
+
+        response = agent.next("456785215456")
+
+        self.assertIn("card number", response["message"])
+        self.assertEqual(extractor.calls, [])
+
+    def test_simple_failed_identity_does_not_call_extractor(self):
+        extractor = RecordingExtractor()
+        client = LookupAndPaymentClient()
+        agent = Agent(client, extractor=extractor)
+        agent.next("ACC1001")
+
+        response = agent.next("nithin")
+        response = agent.next("4321")
+
+        self.assertIn("did not match", response["message"])
+        self.assertEqual(extractor.calls, [])
 
 
 if __name__ == "__main__":

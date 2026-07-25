@@ -132,6 +132,26 @@ class PaymentCardSchemaTests(unittest.TestCase):
         self.assertEqual(client.calls, ["ACC1002"])
         self.assertEqual(client.payment_calls, [])
 
+    def test_three_unknown_accounts_close_the_conversation(self) -> None:
+        client = FakeLookupClient(None)
+        agent = Agent(lookup_client=client)
+
+        self.assertEqual(
+            agent.next("ACC1001")["message"], Agent._UNKNOWN_ACCOUNT_MESSAGE
+        )
+        self.assertEqual(
+            agent.next("ACC1002")["message"], Agent._UNKNOWN_ACCOUNT_MESSAGE
+        )
+        self.assertEqual(
+            agent.next("ACC1003")["message"],
+            Agent._ACCOUNT_LOOKUP_LOCKED_MESSAGE,
+        )
+        self.assertEqual(
+            agent.next("ACC1004")["message"],
+            Agent._ACCOUNT_LOOKUP_LOCKED_MESSAGE,
+        )
+        self.assertEqual(client.calls, ["ACC1001", "ACC1002", "ACC1003"])
+
     def test_lookup_timeout_connection_and_malformed_response_are_safe(self) -> None:
         cases = [
             (TimeoutError(), Agent._TIMEOUT_MESSAGE),
@@ -464,6 +484,7 @@ class CardCollectionTests(unittest.TestCase):
         )
 
         self.assertIn("card number", response["message"])
+        self.assertIn("invalid_card", response["message"])
         self.assertNotIn("CVV", response["message"])
         self.assertNotIn("expiry date", response["message"])
         self.assertNotIn("4111111111111112", response["message"])
@@ -725,6 +746,53 @@ class PaymentFailureTests(unittest.TestCase):
         success = agent.next(self._card_turn())
         self.assertIn("txn_after_correction", success["message"])
         self.assertEqual(len(client.payment_calls), 1)
+
+    def test_three_invalid_card_number_turns_close_without_payment(self) -> None:
+        agent, client = self._amount_collected_agent(
+            [{"success": True, "transaction_id": "must_not_be_used"}]
+        )
+        agent.next("hemanth")
+
+        for card_number in (
+            "547689512545",
+            "657812548976",
+            "45126365894",
+        ):
+            response = agent.next(card_number)
+
+        self.assertEqual(
+            response, {"message": Agent._PAYMENT_RETRY_LIMIT_MESSAGE}
+        )
+        self.assertEqual(client.payment_calls, [])
+        self.assertEqual(agent._payment_retry_attempts, 3)
+
+        repeat = agent.next("CVV 555, expiry 12/2030")
+        self.assertEqual(
+            repeat, {"message": Agent._PAYMENT_RETRY_LIMIT_MESSAGE}
+        )
+        self.assertEqual(client.payment_calls, [])
+
+    def test_invalid_cvv_reports_cvv_and_preserves_valid_card_fields(self) -> None:
+        agent, client = self._amount_collected_agent(
+            [{"success": True, "transaction_id": "txn_after_cvv"}]
+        )
+        agent.next("hemanth")
+        agent.next("4532015112830366")
+
+        invalid = agent.next("54689")
+
+        self.assertIn("invalid_cvv", invalid["message"])
+        self.assertNotIn("invalid_card", invalid["message"])
+        self.assertEqual(agent._card_number, "4532015112830366")
+        self.assertEqual(agent._cardholder_name, "hemanth")
+        self.assertIsNone(agent._cvv)
+        self.assertIn("CVV", agent.next("456785")["message"])
+        self.assertEqual(
+            agent.next("457863"),
+            {"message": Agent._PAYMENT_RETRY_LIMIT_MESSAGE},
+        )
+        self.assertEqual(agent._payment_retry_attempts, 3)
+        self.assertEqual(client.payment_calls, [])
 
 
 class ApiClientTests(unittest.TestCase):

@@ -17,6 +17,7 @@ from models import (
     IdentityDate,
     NumericAmount,
     Pincode,
+    is_supported_card_number,
 )
 
 _ACCOUNT_ID_PATTERN = re.compile(
@@ -612,6 +613,8 @@ def normalize_card_number(value: str) -> str | None:
     normalized = re.sub(r"[\s-]", "", value)
     if not normalized.isdigit() or not 12 <= len(normalized) <= 19:
         return None
+    if not is_supported_card_number(normalized):
+        return None
     checksum = 0
     doubled = False
     for digit in reversed(normalized):
@@ -731,6 +734,18 @@ def parse_card_input(user_input: str) -> CardCandidates:
         r"\s*(?:[a-z]+(?:[\s-]+[a-z]+){2,3})\s*", value, re.IGNORECASE
     ):
         cvv = _parse_spoken_cvv(value)
+
+    # Bare five- or six-digit values are CVV attempts with the wrong length;
+    # longer bare values are card-number attempts, even when too short or
+    # failing Luhn. Do not let either case fall through as an unrecognized
+    # value and accidentally prompt for another field.
+    bare_numeric = re.fullmatch(r"\s*(?:\d[\s-]*){5,19}\s*", value)
+    if card_match is None and bare_numeric and cvv is None:
+        digit_count = len(re.sub(r"\D", "", value))
+        if digit_count in {5, 6}:
+            invalid_cvv = True
+        else:
+            invalid_card_number = True
 
     # A complete card submission may be supplied as prose without labels,
     # e.g. ``Name, card-number, CVV, MM/YYYY``.  The card number is the

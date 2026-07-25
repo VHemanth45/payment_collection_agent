@@ -37,8 +37,8 @@ The CLI automatically uses the following flow when a field needs extraction:
 4. If neither provider is available, the deterministic result is used without
    requiring any extra command or configuration.
 
-When a provider is used, the CLI reports the provider and extraction type on
-stderr, for example: `Calling LLM: ollama (identity extraction)...`.
+Extraction is silent in the CLI. Deterministic parsing handles simple inputs;
+an optional provider is consulted only for genuinely unstructured language.
 
 
 The following sample conversations demonstrate successful payments, natural
@@ -176,7 +176,6 @@ Agent: Thanks. What is your full name exactly as it appears on the account?
 You: you can call me Raja but my full name is Rajarajeswari Balasubramaniam
 Agent: To verify you, provide one verification detail: DOB (YYYY-MM-DD), Aadhaar last four digits, or your six-digit pincode. You can send just the digits.
 You: for verification, I was born in the November of eighty-five, the 23rd
-Calling LLM: ollama (identity extraction)...
 Agent: Your identity has been verified. Your outstanding balance is ₹540.00. How much would you like to pay? Enter an amount such as ₹100, or say 'pay the full balance'.
 You: 100
 Agent: Got it — your payment amount is recorded. What name should appear on the card?
@@ -188,6 +187,64 @@ You: CVV is one two three
 Agent: What is the card expiry date? Use MM/YYYY.
 You: expires December 2027
 Agent: Payment successful. Transaction ID: txn_****7607_zlozaqj. Account ID: ACC1002. Amount: ₹100.00. Status: successful.
+```
+
+### Example 7: Invalid CVV retry limit
+
+Invalid CVV values are rejected locally with the `invalid_cvv` reason. The
+valid card number is retained while the user retries the CVV. After three
+invalid attempts, the conversation closes without calling the payment API.
+
+```text
+Payment Collection Agent
+Type :quit to exit.
+Agent: Let's get started. What is your account ID? (Example: ACC1002)
+You: acc1001
+Agent: Thanks. What is your full name exactly as it appears on the account?
+You: Nithin Jain
+Agent: To verify you, provide one verification detail: DOB (YYYY-MM-DD), Aadhaar last four digits, or your six-digit pincode. You can send just the digits.
+You: 4321
+Agent: Your identity has been verified. Your outstanding balance is ₹1250.75. How much would you like to pay? Enter an amount such as ₹100, or say 'pay the full balance'.
+You: 500
+Agent: Got it — your payment amount is recorded. What name should appear on the card?
+You: hemanth
+Agent: What is the card number? Enter 12–19 digits.
+You: 4532015112830366
+Agent: What is the CVV? Enter 3 or 4 digits.
+You: 12435
+Agent: Payment failed (invalid_cvv): please provide a valid CVV.
+You: 125487
+Agent: Payment failed (invalid_cvv): please provide a valid CVV.
+You: 45226
+Agent: I couldn't complete the payment after three attempts. This conversation is now closed.
+```
+
+### Example 8: Expired card
+
+An expired card is rejected locally with the `invalid_expiry` reason. The
+conversation remains available for a corrected expiry date until the payment
+retry limit is reached.
+
+```text
+Payment Collection Agent
+Type :quit to exit.
+Agent: Let's get started. What is your account ID? (Example: ACC1002)
+You: acc1001
+Agent: Thanks. What is your full name exactly as it appears on the account?
+You: Nithin Jain
+Agent: To verify you, provide one verification detail: DOB (YYYY-MM-DD), Aadhaar last four digits, or your six-digit pincode. You can send just the digits.
+You: 4321
+Agent: Your identity has been verified. Your outstanding balance is ₹1250.75. How much would you like to pay? Enter an amount such as ₹100, or say 'pay the full balance'.
+You: 500
+Agent: Got it — your payment amount is recorded. What name should appear on the card?
+You: hemanth
+Agent: What is the card number? Enter 12–19 digits.
+You: 4532015112830366
+Agent: What is the CVV? Enter 3 or 4 digits.
+You: 123
+Agent: What is the card expiry date? Use MM/YYYY.
+You: 12/2024
+Agent: Payment failed (invalid_expiry): please provide a valid expiry date.
 ```
 
 Use `:quit` to leave. The CLI requires network access to the configured

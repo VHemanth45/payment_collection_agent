@@ -236,6 +236,29 @@ class AccountRecord(BaseModel):
         return data
 
 
+def is_supported_card_number(value: str) -> bool:
+    """Return whether a normalized number has a supported card-network shape."""
+
+    if not isinstance(value, str) or not value.isdigit():
+        return False
+    length = len(value)
+    if value.startswith("4"):
+        return length in {13, 16, 19}
+    if length == 16 and (
+        51 <= int(value[:2]) <= 55
+        or 2221 <= int(value[:4]) <= 2720
+    ):
+        return True
+    if length == 15 and value[:2] in {"34", "37"}:
+        return True
+    if length in {16, 19} and (
+        value.startswith(("6011", "65"))
+        or 644 <= int(value[:3]) <= 649
+    ):
+        return True
+    return False
+
+
 class PaymentCard(BaseModel):
     """Card payload shape accepted by the payment API."""
 
@@ -260,6 +283,8 @@ class PaymentCard(BaseModel):
         normalized = value.replace(" ", "").replace("-", "")
         if not normalized.isdigit() or not 12 <= len(normalized) <= 19:
             raise ValueError("card number must contain 12 to 19 digits")
+        if not is_supported_card_number(normalized):
+            raise ValueError("card number has an unsupported network format")
         checksum = 0
         doubled = False
         for digit in reversed(normalized):

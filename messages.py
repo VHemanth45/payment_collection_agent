@@ -39,8 +39,9 @@ AMOUNT_PROMPT = (
     "'pay the full balance'."
 )
 AMOUNT_CORRECTION_PROMPT = (
-    "Please provide a payment amount greater than ₹0.00, no more than the "
-    "outstanding balance, and with no more than two decimal places."
+    "Payment failed (invalid_amount): provide an amount greater than ₹0.00, "
+    "no more than the outstanding balance, and with no more than two decimal "
+    "places."
 )
 AMOUNT_ACCEPTED_MESSAGE = (
     "Got it — your payment amount is recorded. What name should appear on the card?"
@@ -59,20 +60,21 @@ PAYMENT_RETRY_LIMIT_MESSAGE = (
     "This conversation is now closed."
 )
 INSUFFICIENT_BALANCE_MESSAGE = (
-    "That amount is not available against the account balance. "
-    "Please provide a smaller payment amount."
+    "Payment failed (insufficient_balance): that amount is not available "
+    "against the account balance. Please provide a smaller payment amount."
 )
 INVALID_CARD_PAYMENT_MESSAGE = (
-    "The card number was not accepted. Please provide all card details again "
+    "Payment failed (invalid_card): the card number failed validation or has "
+    "an unsupported length/network. Please provide all card details again "
     "with a different card number."
 )
 INVALID_CVV_PAYMENT_MESSAGE = (
-    "The CVV was not accepted. Please provide all card details again with a "
-    "valid CVV."
+    "Payment failed (invalid_cvv): the CVV must be 3 digits, or 4 digits for "
+    "Amex. Please provide all card details again with a valid CVV."
 )
 INVALID_EXPIRY_PAYMENT_MESSAGE = (
-    "The expiry date was not accepted. Please provide all card details again "
-    "with a valid expiry date."
+    "Payment failed (invalid_expiry): the expiry is invalid or expired. "
+    "Please provide all card details again with a valid expiry date."
 )
 ZERO_BALANCE_MESSAGE = (
     "Your outstanding balance is ₹0.00. There is no payment amount to collect."
@@ -87,6 +89,10 @@ VERIFICATION_FAILURE_MESSAGE = (
 )
 VERIFICATION_LOCKED_MESSAGE = (
     "I couldn't verify your identity after three attempts. "
+    "This conversation is now closed."
+)
+ACCOUNT_LOOKUP_LOCKED_MESSAGE = (
+    "I couldn't find a valid account after three attempts. "
     "This conversation is now closed."
 )
 UNKNOWN_ACCOUNT_MESSAGE = (
@@ -137,7 +143,15 @@ def local_card_failure_message(
         safe_fields = ["card number"]
     if not safe_fields:
         return CARD_DETAILS_PROMPT
-    return f"Please provide a valid {safe_fields[0]}."
+    field = safe_fields[0]
+    reason = {
+        "card number": "invalid_card",
+        "CVV": "invalid_cvv",
+        "expiry date": "invalid_expiry",
+    }.get(field)
+    if reason is not None:
+        return f"Payment failed ({reason}): please provide a valid {field}."
+    return f"Please provide a valid {field}."
 
 
 def card_field_prompt(field: str) -> str:

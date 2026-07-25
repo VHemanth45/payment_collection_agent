@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import urllib.request
 from typing import Any
 
@@ -173,11 +172,6 @@ class AutomaticExtractor:
             ):
                 continue
             try:
-                print(
-                    f"Calling LLM: {name} ({request.group.value} extraction)...",
-                    file=sys.stderr,
-                    flush=True,
-                )
                 result = provider.extract(request)
             except Exception:
                 self._disabled.add(name)

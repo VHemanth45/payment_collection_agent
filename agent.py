@@ -90,6 +90,7 @@ class Agent:
     _BALANCE_UNAVAILABLE_MESSAGE = _messages.BALANCE_UNAVAILABLE_MESSAGE
     _VERIFICATION_FAILURE_MESSAGE = _messages.VERIFICATION_FAILURE_MESSAGE
     _VERIFICATION_LOCKED_MESSAGE = _messages.VERIFICATION_LOCKED_MESSAGE
+    _ACCOUNT_LOOKUP_LOCKED_MESSAGE = _messages.ACCOUNT_LOOKUP_LOCKED_MESSAGE
     _UNKNOWN_ACCOUNT_MESSAGE = _messages.UNKNOWN_ACCOUNT_MESSAGE
     _TIMEOUT_MESSAGE = _messages.TIMEOUT_MESSAGE
     _CONNECTION_MESSAGE = _messages.CONNECTION_MESSAGE
@@ -127,6 +128,8 @@ class Agent:
         self._state = _ConversationState.NEED_ACCOUNT
         self._account_id: str | None = None
         self._account: AccountRecord | None = None
+        self._account_lookup_attempts = 0
+        self._account_lookup_exhausted = False
         self._verification_attempts = 0
         self._name_candidate: str | None = None
         self._dob_candidate: str | None = None
@@ -195,7 +198,12 @@ class Agent:
         )
 
         if self._state is _ConversationState.CLOSED_FAILURE:
-            return {"message": self._VERIFICATION_LOCKED_MESSAGE}
+            message = (
+                self._ACCOUNT_LOOKUP_LOCKED_MESSAGE
+                if self._account_lookup_exhausted
+                else self._VERIFICATION_LOCKED_MESSAGE
+            )
+            return {"message": message}
         if self._state is _ConversationState.PAYMENT_COMPLETE:
             return {"message": self._payment_success_message()}
         if self._state is _ConversationState.PAYMENT_FAILED:
@@ -520,6 +528,10 @@ class Agent:
                 candidates.cvv is not None,
                 candidates.expiry_month is not None
                 and candidates.expiry_year is not None,
+                candidates.invalid_cardholder_name,
+                candidates.invalid_card_number,
+                candidates.invalid_cvv,
+                candidates.invalid_expiry,
             )
         )
 
@@ -724,6 +736,12 @@ class Agent:
             )
         result = self._perform_lookup(account_id)
         if result.status is not LookupStatus.FOUND:
+            if result.status is LookupStatus.NOT_FOUND:
+                self._account_lookup_attempts += 1
+                if self._account_lookup_attempts >= 3:
+                    self._account_lookup_exhausted = True
+                    self._state = _ConversationState.CLOSED_FAILURE
+                    return {"message": self._ACCOUNT_LOOKUP_LOCKED_MESSAGE}
             self._account_id = None
             self._account = None
             self._reset_verification_context()
@@ -848,11 +866,16 @@ class Agent:
         # valid factor that the regex parser missed.  The extractor can only
         # supply candidates; the exact account comparison below remains the
         # authority.
-        self._clear_secondary_candidates()
-        self._maybe_extract(ExtractionGroup.IDENTITY, user_input, force=True)
-        if self._identity_matches_account():
-            self._state = _ConversationState.VERIFIED_NEED_AMOUNT
-            return {"message": self._amount_collection_message()}
+        # A simple name/factor submission is already fully understood by the
+        # deterministic parser.  Do not send it to an extractor just because
+        # the values were wrong.  Extraction is reserved for genuinely
+        # unstructured prose, such as "I was born in November of eighty-five".
+        if self._is_unstructured_identity_turn(user_input):
+            self._clear_secondary_candidates()
+            self._maybe_extract(ExtractionGroup.IDENTITY, user_input, force=True)
+            if self._identity_matches_account():
+                self._state = _ConversationState.VERIFIED_NEED_AMOUNT
+                return {"message": self._amount_collection_message()}
 
         return self._record_verification_failure()
 
@@ -937,6 +960,8 @@ class Agent:
         if re.fullmatch(r"[A-Za-z]+(?:\s+[A-Za-z]+){0,3}", value):
             return False
         if re.fullmatch(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}", value):
+            return False
+        if re.fullmatch(r"\d{4}|\d{6}", value):
             return False
         if re.search(
             r"\b(?:name|dob|date\s+of\s+birth|aadhaar|aadhar|pincode|"
@@ -1133,17 +1158,26 @@ class Agent:
             self._expiry_year = None
             self._invalid_expiry = True
 
+        # A parser may see a field label inside a cardholder name (for
+        # example, "Demo Cardholder") and mark it invalid before recovering a
+        # valid positional value.  Only count an invalid field when no valid
+        # value for that same field was recovered on this turn.
         has_local_error = any(
             (
-                candidates.invalid_cardholder_name,
-                candidates.invalid_card_number,
-                candidates.invalid_cvv,
-                candidates.invalid_expiry,
+                candidates.invalid_cardholder_name
+                and candidates.cardholder_name is None,
+                candidates.invalid_card_number and candidates.card_number is None,
+                candidates.invalid_cvv and candidates.cvv is None,
+                candidates.invalid_expiry
+                and (
+                    candidates.expiry_month is None
+                    or candidates.expiry_year is None
+                ),
             )
         )
+        if has_local_error:
+            return self._record_local_card_failure(candidates)
         if not self._card_fields_complete():
-            if complete_attempt and has_local_error:
-                return self._record_local_card_failure(candidates)
             return {"message": self._card_collection_message()}
 
         # Keep malformed values out of the eventual payment stage without
@@ -1186,26 +1220,53 @@ class Agent:
     ) -> dict[str, str]:
         self._payment_retry_attempts += 1
         message = self._local_card_failure_message(candidates, fallback=fallback)
-        self._reset_card_context()
         if self._payment_retry_attempts >= 3:
             self._payment_retry_exhausted = True
             self._state = _ConversationState.PAYMENT_FAILED
             self._close_payment_conversation()
             return {"message": self._PAYMENT_RETRY_LIMIT_MESSAGE}
+        if fallback == "card":
+            self._reset_card_context()
+        else:
+            self._clear_invalid_card_fields(candidates)
         self._state = _ConversationState.AMOUNT_COLLECTED
         return {"message": message}
+
+    def _clear_invalid_card_fields(self, candidates: Any) -> None:
+        """Discard only locally invalid fields so valid fields can be reused."""
+
+        if candidates.invalid_cardholder_name and candidates.cardholder_name is None:
+            self._cardholder_name = None
+            self._invalid_cardholder_name = False
+        if candidates.invalid_card_number and candidates.card_number is None:
+            self._card_number = None
+            self._invalid_card_number = False
+        if candidates.invalid_cvv and candidates.cvv is None:
+            self._cvv = None
+            self._invalid_cvv = False
+        if candidates.invalid_expiry and (
+            candidates.expiry_month is None or candidates.expiry_year is None
+        ):
+            self._expiry_month = None
+            self._expiry_year = None
+            self._invalid_expiry = False
 
     def _local_card_failure_message(
         self, candidates: Any, *, fallback: str | None = None
     ) -> str:
         fields: list[str] = []
-        if candidates.invalid_card_number or fallback == "card":
+        if (
+            candidates.invalid_card_number
+            and candidates.card_number is None
+        ) or fallback == "card":
             fields.append("card number")
-        if candidates.invalid_expiry:
+        if candidates.invalid_expiry and (
+            candidates.expiry_month is None or candidates.expiry_year is None
+        ):
             fields.append("expiry date")
-        if candidates.invalid_cvv:
+        if candidates.invalid_cvv and candidates.cvv is None:
             fields.append("CVV")
-        if candidates.invalid_cardholder_name:
+        if candidates.invalid_cardholder_name and candidates.cardholder_name is None:
             fields.append("cardholder name")
         if not fields:
             return self._CARD_DETAILS_PROMPT
