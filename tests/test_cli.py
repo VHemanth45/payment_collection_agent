@@ -17,6 +17,7 @@ class CliTests(unittest.TestCase):
         api_constructor.assert_called_once_with()
         self.assertIn("full name", response["message"])
         self.assertEqual(client.lookup_calls, ["ACC1002"])
+        self.assertIsNotNone(agent._extractor)
 
     def test_cli_runs_a_conversation_without_network_or_secret_echo(self):
         input_stream = StringIO(

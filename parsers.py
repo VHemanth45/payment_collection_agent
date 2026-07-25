@@ -99,12 +99,12 @@ _MONTHS = {
 _NAME_LABEL_PATTERN = re.compile(
     r"\b(?:my\s+)?(?:full\s+)?name\s*(?:is|:)\s*"
     r"(?P<value>[^,;]+?)(?=\s*,?\s*(?:and\s+)?(?:my\s+)?(?:date\s+of\s+birth|dob|"
-    r"aadhaar|aadhar|pin\s*code|pincode)\b|$)",
+    r"aadhaar|aadhar|pin\s*code|pincode|account(?:\s+(?:id|number))?)\b|$)",
     re.IGNORECASE,
 )
 _I_AM_NAME_PATTERN = re.compile(
     r"\bI\s+am\s+(?P<value>[^,;]+?)(?=\s*,?\s*(?:and\s+)?(?:my\s+)?(?:date\s+of\s+birth|"
-    r"dob|aadhaar|aadhar|pin\s*code|pincode)\b|$)",
+    r"dob|aadhaar|aadhar|pin\s*code|pincode|account(?:\s+(?:id|number))?)\b|$)",
     re.IGNORECASE,
 )
 _CASUAL_NAME_PATTERN = re.compile(
@@ -322,7 +322,17 @@ def parse_identity_input(
             )
             if factor_match:
                 prefix = user_input[: factor_match.start()].strip(" \t,;:-")
-                if prefix and not re.fullmatch(r"(?:my|the)", prefix, re.IGNORECASE):
+                if (
+                    prefix
+                    and not extract_account_ids(user_input)
+                    and not contains_account_reference(user_input)
+                    and not re.fullmatch(
+                    r"(?:my|the|last\s+(?:four|4)(?:\s+digits?)?\s+(?:of|from)\s+(?:my|the)|"
+                    r"(?:my|the)\s+last\s+(?:four|4)(?:\s+digits?)?)",
+                    prefix,
+                    re.IGNORECASE,
+                    )
+                ):
                     name = clean_name(
                         re.sub(r"\band\s*$", "", prefix, flags=re.I)
                     )

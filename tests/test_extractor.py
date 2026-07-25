@@ -77,28 +77,22 @@ class HybridExtractionTests(unittest.TestCase):
         agent = Agent(client, extractor=extractor)
 
         agent.next("ACC1001")
-        self.assertEqual([call.group for call in extractor.calls], [ExtractionGroup.IDENTITY])
-        request = extractor.calls[0]
-        self.assertEqual(request.schema, EXTRACTION_SCHEMAS[ExtractionGroup.IDENTITY])
-        self.assertEqual(
-            request.tool_choice,
-            {"type": "function", "function": {"name": "extract_identity"}},
-        )
+        self.assertEqual(extractor.calls, [])
 
-        # Regex already has all identity fields, so no second identity call.
+        agent.next("Nithin Jain")
+        self.assertEqual(extractor.calls, [])
+
+        # Regex already has all identity fields, so no identity call is needed.
         agent.next("Nithin Jain, DOB 1990-05-14")
-        self.assertEqual(len(extractor.calls), 1)
+        self.assertEqual(len(extractor.calls), 0)
 
         # The amount turn is complete on the regex fast path; card extraction
         # is not allowed to run until the card state is reached.
         agent.next("500")
-        self.assertEqual(len(extractor.calls), 1)
+        self.assertEqual(len(extractor.calls), 0)
 
         agent.next("cardholder name: Someone Else, card number 4532-0151-1283-0366")
-        self.assertEqual([call.group for call in extractor.calls], [
-            ExtractionGroup.IDENTITY,
-            ExtractionGroup.CARD,
-        ])
+        self.assertEqual(extractor.calls, [])
 
     def test_missing_extractor_fields_are_null_and_do_not_change_state(self):
         client = LookupAndPaymentClient()
@@ -112,7 +106,7 @@ class HybridExtractionTests(unittest.TestCase):
         self.assertEqual(response, {"message": Agent._FULL_NAME_PROMPT})
         self.assertIsNone(agent._name_candidate)
         self.assertIsNone(agent._dob_candidate)
-        self.assertEqual(extractor.calls[0].group, ExtractionGroup.IDENTITY)
+        self.assertEqual(extractor.calls, [])
 
     def test_extractor_cannot_override_better_regex_values_or_use_response_text(self):
         client = LookupAndPaymentClient()
@@ -128,14 +122,15 @@ class HybridExtractionTests(unittest.TestCase):
         )
         agent = Agent(client, extractor=extractor)
         agent.next("ACC1001")
+        agent.next("full name: Nithin Jain")
 
         # The regex name wins over extractor output, while the structured DOB
-        # fills the missing secondary factor and deterministically verifies.
-        response = agent.next("full name: Nithin Jain")
+        # from the ambiguous natural-language turn verifies deterministically.
+        response = agent.next("I was born in November 1990 on the 14th")
 
         self.assertIn("1250.75", response["message"])
         self.assertNotIn("Wrong Person", response["message"])
-        self.assertEqual(len(extractor.calls), 2)
+        self.assertEqual(len(extractor.calls), 1)
 
         # A free-form string is not interpreted as structured extractor data.
         extractor.responses[ExtractionGroup.PAYMENT] = "pay five hundred"

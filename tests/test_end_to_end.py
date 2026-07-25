@@ -99,6 +99,20 @@ class EndToEndTests(unittest.TestCase):
         self.assertIn("₹1250.75", response["message"])
         self.assertEqual(client.lookup_calls, ["ACC1001"])
 
+    def test_pincode_supplied_with_account_is_retained_until_name_arrives(self):
+        client = EvaluationClient()
+        agent = Agent(client)
+
+        response = agent.next(
+            "hey I think my account is ACC1004 but pincode is 400004 too"
+        )
+
+        self.assertEqual(response, {"message": Agent._FULL_NAME_PROMPT})
+        verified = agent.next("Rahul Mehta")
+
+        self.assertIn("₹3200.50", verified["message"])
+        self.assertEqual(client.lookup_calls, ["ACC1004"])
+
     def test_natural_dob_turn_does_not_become_a_name(self):
         client = EvaluationClient()
         agent = Agent(client)
@@ -108,6 +122,19 @@ class EndToEndTests(unittest.TestCase):
         response = agent.next('"born 14th May 1990"')
 
         self.assertIn("₹1250.75", response["message"])
+
+    def test_conversational_filler_does_not_overwrite_name(self):
+        client = EvaluationClient()
+        agent = Agent(client)
+        agent.next("ACC1002")
+        agent.next("you can call me Raja but my full name is Rajarajeswari Balasubramaniam")
+        agent.next("for verification, I was born in the November of eighty-five, the 23rd")
+
+        response = agent.next("just take whatever's left in there")
+        self.assertIn("verification detail", response["message"])
+
+        verified = agent.next("1985-11-23")
+        self.assertIn("₹540.00", verified["message"])
 
     def test_casual_nickname_prefers_explicit_full_name(self):
         client = EvaluationClient()

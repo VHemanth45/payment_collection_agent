@@ -21,51 +21,173 @@ python -m pip install 'pydantic>=2,<3'
 
 ## Run the CLI
 
-The CLI is backed by the supplied HTTP API. It calls `/api/lookup-account` only
-after a valid account ID and calls `/api/process-payment` only after strict
-verification, amount validation, and card validation succeed:
+Run the CLI directly after setup:
 
 ```bash
 python main.py
-# or, after installing the project:
-payment-collection-agent
-# safe parser/state diagnostics (written to stderr; sensitive values are not logged)
-python main.py --debug
 
-# optional local Ollama fallback
-PAYMENT_AGENT_LLM=ollama OLLAMA_MODEL=llama3.2 python main.py
-
-# optional Claude fallback
-PAYMENT_AGENT_LLM=anthropic ANTHROPIC_API_KEY=your-key python main.py
-# explicitly opt in to sending raw card fields to Claude (not recommended)
-PAYMENT_AGENT_LLM=anthropic PAYMENT_AGENT_ALLOW_SENSITIVE_LLM=true \
-  ANTHROPIC_API_KEY=your-key python main.py
 ```
 
-Try this sample conversation (the expiry year can be any future year):
+The CLI automatically uses the following flow when a field needs extraction:
+
+1. Deterministic parsing runs first.
+2. Local Ollama is tried automatically for missing or unclear fields.
+3. Claude is tried when `ANTHROPIC_API_KEY` is configured and Ollama is
+   unavailable.
+4. If neither provider is available, the deterministic result is used without
+   requiring any extra command or configuration.
+
+When a provider is used, the CLI reports the provider and extraction type on
+stderr, for example: `Calling LLM: ollama (identity extraction)...`.
+
+
+The following sample conversations demonstrate successful payments, natural
+language field extraction, an invalid card-number retry, and out-of-order
+identity information. Transaction IDs are illustrative.
+
+### Example 1: Natural-language payment details
 
 ```text
-You: account id ACC1002
+Payment Collection Agent
+Type :quit to exit.
+Agent: Let's get started. What is your account ID? (Example: ACC1002)
+You: acc1001
+Agent: Thanks. What is your full name exactly as it appears on the account?
+You: it's Nithin, Nithin Jain
+Agent: To verify you, provide one verification detail: DOB (YYYY-MM-DD), Aadhaar last four digits, or your six-digit pincode. You can send just the digits.
+You: born 14th May 1990
+Agent: Your identity has been verified. Your outstanding balance is ₹1250.75. How much would you like to pay? Enter an amount such as ₹100, or say 'pay the full balance'.
+You: 500
+Agent: Got it — your payment amount is recorded. What name should appear on the card?
+You: hemanth
+Agent: What is the card number? Enter 12–19 digits.
+You: 4532015112830366
+Agent: What is the CVV? Enter 3 or 4 digits.
+You: CVV is one two three
+Agent: What is the card expiry date? Use MM/YYYY.
+You: "expires December 2027"
+Agent: Payment successful. Transaction ID: txn_****9374_tki95ad. Account ID: ACC1001. Amount: ₹500.00. Status: successful.
+```
+
+### Example 2: Invalid card number followed by a retry
+
+```text
+Payment Collection Agent
+Type :quit to exit.
+Agent: Let's get started. What is your account ID? (Example: ACC1002)
+You: acc1002
+Agent: Thanks. What is your full name exactly as it appears on the account?
 You: Rajarajeswari Balasubramaniam
-You: DOB 1985-11-23
+Agent: To verify you, provide one verification detail: DOB (YYYY-MM-DD), Aadhaar last four digits, or your six-digit pincode. You can send just the digits.
+You: 9876
+Agent: Your identity has been verified. Your outstanding balance is ₹540.00. How much would you like to pay? Enter an amount such as ₹100, or say 'pay the full balance'.
+You: 500
+Agent: Got it — your payment amount is recorded. What name should appear on the card?
+You: Nithin
+Agent: What is the card number? Enter 12–19 digits.
+You: 4532015112830361
+Agent: Please provide a valid card number.
+You: 4532015112830366
+Agent: What is the CVV? Enter 3 or 4 digits.
+You: 123
+Agent: What is the card expiry date? Use MM/YYYY.
+You: dec 2028
+Agent: Payment successful. Transaction ID: txn_****8488_p74e3t6. Account ID: ACC1002. Amount: ₹500.00. Status: successful.
+```
+
+### Example 3: Out-of-order identity information without re-prompting
+
+```text
+Payment Collection Agent
+Type :quit to exit.
+Agent: Let's get started. What is your account ID? (Example: ACC1002)
+You: My name is Nithin Jain and account id is ACC1001
+Agent: To verify you, provide one verification detail: DOB (YYYY-MM-DD), Aadhaar last four digits, or your six-digit pincode. You can send just the digits.
+You: 4321
+Agent: Your identity has been verified. Your outstanding balance is ₹1250.75. How much would you like to pay? Enter an amount such as ₹100, or say 'pay the full balance'.
+You: 500
+Agent: Got it — your payment amount is recorded. What name should appear on the card?
+You: hemanth
+Agent: What is the card number? Enter 12–19 digits.
+You: 4532015112830366
+Agent: What is the CVV? Enter 3 or 4 digits.
+You: 123
+Agent: What is the card expiry date? Use MM/YYYY.
+You: dec 2029
+Agent: Payment successful. Transaction ID: txn_****0363_rbi8yaa. Account ID: ACC1001. Amount: ₹500.00. Status: successful.
+```
+
+### Example 4: Verification-factor retry
+
+```text
+Payment Collection Agent
+Type :quit to exit.
+Agent: Let's get started. What is your account ID? (Example: ACC1002)
+You: yeah my account number is ACC1001 I think
+Agent: Thanks. What is your full name exactly as it appears on the account?
+You: it's Nithin, Nithin Jain
+Agent: To verify you, provide one verification detail: DOB (YYYY-MM-DD), Aadhaar last four digits, or your six-digit pincode. You can send just the digits.
+You: Aadhaar ends with 9876, shall I give pincode instead?
+Agent: To verify you, provide one verification detail: DOB (YYYY-MM-DD), Aadhaar last four digits, or your six-digit pincode. You can send just the digits.
+You: Aadhaar ends with 4321, shall I give pincode instead?
+Agent: Your identity has been verified. Your outstanding balance is ₹1250.75. How much would you like to pay? Enter an amount such as ₹100, or say 'pay the full balance'.
+You: 500
+Agent: Got it — your payment amount is recorded. What name should appear on the card?
+You: hemanth
+Agent: What is the card number? Enter 12–19 digits.
+You: the card number is 4532 0151 1283 0366
+Agent: What is the CVV? Enter 3 or 4 digits.
+You: 123
+Agent: What is the card expiry date? Use MM/YYYY.
+You: 12/2029
+Agent: Payment successful. Transaction ID: txn_****5339_zad021s. Account ID: ACC1001. Amount: ₹500.00. Status: successful.
+```
+
+### Example 5: Out-of-order account, pincode, and payment details
+
+```text
+Payment Collection Agent
+Type :quit to exit.
+Agent: Let's get started. What is your account ID? (Example: ACC1002)
+You: hey I think my account is ACC1004 but pincode is 400004 too
+Agent: Thanks. What is your full name exactly as it appears on the account?
+You: my name is Rahul Mehta
+Agent: Your identity has been verified. Your outstanding balance is ₹3200.50. How much would you like to pay? Enter an amount such as ₹100, or say 'pay the full balance'.
+You: 500
+Agent: Got it — your payment amount is recorded. What name should appear on the card?
+You: hemanth
+Agent: What is the card number? Enter 12–19 digits.
+You: 4532015112830366
+Agent: What is the CVV? Enter 3 or 4 digits.
+You: 123
+Agent: What is the card expiry date? Use MM/YYYY.
+You: 12/2030
+Agent: Payment successful. Transaction ID: txn_****7642_j0ldfd6. Account ID: ACC1004. Amount: ₹500.00. Status: successful.
+```
+
+### Example 6: LLM fallback for a natural-language DOB
+
+```text
+Payment Collection Agent
+Type :quit to exit.
+Agent: Let's get started. What is your account ID? (Example: ACC1002)
+You: hi so I bank with you guys, my account should be ACC1002 I believe
+Agent: Thanks. What is your full name exactly as it appears on the account?
+You: you can call me Raja but my full name is Rajarajeswari Balasubramaniam
+Agent: To verify you, provide one verification detail: DOB (YYYY-MM-DD), Aadhaar last four digits, or your six-digit pincode. You can send just the digits.
+You: for verification, I was born in the November of eighty-five, the 23rd
+Calling LLM: ollama (identity extraction)...
+Agent: Your identity has been verified. Your outstanding balance is ₹540.00. How much would you like to pay? Enter an amount such as ₹100, or say 'pay the full balance'.
 You: 100
-You: Rajarajeswari Balasubramaniam
-You: 4532 0151 1283 0366
-You: 123
-You: 12/2027
-```
-
-Another sample conversation is:
-
-```text
-You: account id ACC1001
-You: Nithin Jain
-You: DOB 1990-05-14
-You: pay the outstanding balance
-You: Demo Cardholder
-You: 4532 0151 1283 0366
-You: 123
-You: 12/2027
+Agent: Got it — your payment amount is recorded. What name should appear on the card?
+You: hemanth
+Agent: What is the card number? Enter 12–19 digits.
+You: the card number is 4532 0151 1283 0366
+Agent: What is the CVV? Enter 3 or 4 digits.
+You: CVV is one two three
+Agent: What is the card expiry date? Use MM/YYYY.
+You: expires December 2027
+Agent: Payment successful. Transaction ID: txn_****7607_zlozaqj. Account ID: ACC1002. Amount: ₹100.00. Status: successful.
 ```
 
 Use `:quit` to leave. The CLI requires network access to the configured
@@ -86,15 +208,6 @@ Run the aggregate evaluation notes with:
 
 ```bash
 python -m evaluation
-# or
-python main.py --evaluate
-
-# LLM-driven persona simulation and judging (requires GROQ_API_KEY and the groq SDK)
-GROQ_API_KEY=your-key python -m evaluation --groq
-# or through the main entry point
-GROQ_API_KEY=your-key python main.py --evaluate --groq
-# use --quiet only when the live conversation logs are not wanted
-GROQ_API_KEY=your-key python main.py --evaluate --groq --quiet
 ```
 
 The end-to-end suite covers full and partial payments, strict verification and

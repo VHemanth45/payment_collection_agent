@@ -231,6 +231,20 @@ class IdentityVerificationTests(unittest.TestCase):
         self.assertIn("1250.75", response["message"])
         self.assertEqual(client.calls, ["ACC1001"])
 
+    def test_name_before_account_id_is_not_reasked_or_misparsed(self) -> None:
+        client = FakeLookupClient(self.client.response)
+        agent = Agent(client)
+
+        response = agent.next(
+            "My name is Nithin Jain and account id is ACC1001"
+        )
+
+        self.assertIn("verification detail", response["message"])
+        verified_response = agent.next("4321")
+
+        self.assertIn("1250.75", verified_response["message"])
+        self.assertEqual(client.calls, ["ACC1001"])
+
     def test_name_comparison_is_case_sensitive_and_failure_is_generic(self) -> None:
         self.agent.next("nithin jain")
         response = self.agent.next("pincode is 400001")
@@ -264,6 +278,13 @@ class IdentityVerificationTests(unittest.TestCase):
 
         self.assertEqual(invalid, {"message": Agent._INVALID_SECONDARY_FACTOR_PROMPT})
         self.assertIn("1250.75", valid["message"])
+
+    def test_aadhaar_phrase_does_not_overwrite_existing_name(self) -> None:
+        self.agent.next("Nithin Jain")
+
+        response = self.agent.next("last four of my Aadhaar is 4321")
+
+        self.assertIn("1250.75", response["message"])
 
     def test_three_complete_failures_lock_conversation_and_block_later_calls(self) -> None:
         for attempt in range(3):

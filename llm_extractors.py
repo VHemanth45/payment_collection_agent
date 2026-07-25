@@ -8,18 +8,26 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import urllib.request
 from typing import Any
 
-from extractor import ExtractionRequest
+from extractor import ExtractionGroup, ExtractionRequest
 
 
 def _prompt(request: ExtractionRequest) -> str:
+    instructions = (
+        "For identity extraction, return DOB as YYYY-MM-DD when the message "
+        "contains an explicit natural-language date. Return only a clearly "
+        "stated full name and never use conversational filler as a name."
+        if request.group is ExtractionGroup.IDENTITY
+        else ""
+    )
     return (
         "Extract only the fields in this schema from the user message. "
         "Return one JSON object with every required property. Use null when "
-        "a value is missing or unclear. Do not infer, normalize, verify, or "
-        "invent values.\n\n"
+        "a value is missing or unclear. Do not infer, verify, or invent values. "
+        f"{instructions}\n\n"
         f"Schema:\n{json.dumps(request.schema, ensure_ascii=False)}\n\n"
         f"User message:\n{request.user_input}"
     )
@@ -58,6 +66,7 @@ class OllamaExtractor:
             "model": self.model,
             "stream": False,
             "format": request.schema,
+            "options": {"temperature": 0},
             "messages": [
                 {"role": "system", "content": "Return JSON only."},
                 {"role": "user", "content": _prompt(request)},
@@ -129,12 +138,61 @@ class AnthropicExtractor:
         return _json_object(text)
 
 
-def extractor_from_environment() -> OllamaExtractor | AnthropicExtractor | None:
-    """Build the configured provider, or keep the CLI deterministic by default."""
+class AutomaticExtractor:
+    """Best-effort provider chain used by the CLI without extra configuration.
+
+    Providers are tried lazily only when the agent needs extraction. A failed
+    provider is disabled for the remainder of the conversation, so an absent
+    Ollama server or Claude API never changes the deterministic agent flow or
+    causes repeated connection attempts.
+    """
+
+    allow_sensitive_data = True
+
+    def __init__(self) -> None:
+        timeout = float(os.getenv("PAYMENT_AGENT_LLM_TIMEOUT", "5"))
+        self._providers: list[tuple[str, Any]] = [
+            ("ollama", OllamaExtractor(timeout=timeout))
+        ]
+        if os.getenv("ANTHROPIC_API_KEY"):
+            try:
+                self._providers.append(("anthropic", AnthropicExtractor()))
+            except ValueError:
+                pass
+        self._disabled: set[str] = set()
+
+    def extract(self, request: ExtractionRequest) -> dict[str, Any]:
+        for name, provider in self._providers:
+            if name in self._disabled:
+                continue
+            # Claude is never sent raw card fields unless the existing explicit
+            # opt-in policy allows it. Ollama remains the local card fallback.
+            if (
+                request.group is ExtractionGroup.CARD
+                and not getattr(provider, "allow_sensitive_data", False)
+            ):
+                continue
+            try:
+                print(
+                    f"Calling LLM: {name} ({request.group.value} extraction)...",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                result = provider.extract(request)
+            except Exception:
+                self._disabled.add(name)
+                continue
+            if isinstance(result, dict):
+                return result
+        return {}
+
+
+def extractor_from_environment() -> OllamaExtractor | AnthropicExtractor | AutomaticExtractor:
+    """Build an automatic provider chain; explicit settings remain overrides."""
 
     provider = os.getenv("PAYMENT_AGENT_LLM", "").strip().lower()
     if provider == "ollama":
         return OllamaExtractor()
     if provider in {"anthropic", "claude"}:
         return AnthropicExtractor()
-    return None
+    return AutomaticExtractor()

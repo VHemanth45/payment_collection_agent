@@ -225,8 +225,15 @@ class Agent:
             self._merge_regex_turn(regex_turn)
             if len(account_ids) == 0:
                 return {"message": self._ACCOUNT_CORRECTION_PROMPT}
+            # An account-only turn must not be sent to the identity extractor:
+            # a model can hallucinate a name from an account ID and make the
+            # conversation skip the required full-name prompt.  Identity
+            # extraction remains available when this same turn contains
+            # recognizable identity data, or when a later identity turn is
+            # received.
+            has_identity_input = self._identity_input_available()
             response = self._handle_account_id(account_ids[0])
-            if self._state is _ConversationState.NEED_FULL_NAME:
+            if self._state is _ConversationState.NEED_FULL_NAME and has_identity_input:
                 self._maybe_extract(ExtractionGroup.IDENTITY, user_input)
                 if self._identity_input_available():
                     return self._handle_identity_turn(user_input)
@@ -310,8 +317,8 @@ class Agent:
         identity = regex_turn.identity
         if identity.name is not None and not (
             self._name_candidate is not None
-            and not self._name_candidate.strip().lower().startswith(("its ", "it's "))
-            and identity.name.strip().lower().startswith(("its ", "it's "))
+            and not self._is_suspicious_name(self._name_candidate)
+            and self._is_suspicious_name(identity.name)
         ):
             self._name_candidate = identity.name
         if identity.dob is not None:
@@ -422,7 +429,9 @@ class Agent:
             )
         )
 
-    def _maybe_extract(self, group: ExtractionGroup, user_input: str) -> None:
+    def _maybe_extract(
+        self, group: ExtractionGroup, user_input: str, *, force: bool = False
+    ) -> None:
         """Invoke the optional extractor only for still-missing fields."""
 
         missing = self._missing_extraction_fields(group)
@@ -430,7 +439,24 @@ class Agent:
             group is ExtractionGroup.IDENTITY
             and self._is_suspicious_name(self._name_candidate)
         )
-        if not missing and not suspicious_name:
+        unstructured_identity = (
+            group is ExtractionGroup.IDENTITY
+            and self._is_unstructured_identity_turn(user_input)
+        )
+        has_deterministic_candidate = self._has_deterministic_candidate(
+            group, user_input
+        )
+        if (
+            not force
+            and (
+                not missing
+                or (
+                    has_deterministic_candidate
+                    and not suspicious_name
+                    and not unstructured_identity
+                )
+            )
+        ):
             return
         if self._extractor is None:
             _LOGGER.debug(
@@ -461,6 +487,41 @@ class Agent:
         self._merge_extractor_fields(group, fields)
         if suspicious_name and self._name_candidate is None:
             self._name_candidate = previous_name
+
+    @staticmethod
+    def _has_deterministic_candidate(
+        group: ExtractionGroup, user_input: str
+    ) -> bool:
+        """Return whether this turn already contains a locally parsed field."""
+
+        if group is ExtractionGroup.IDENTITY:
+            candidates = parse_identity_input(
+                user_input, allow_unlabeled_factors=True
+            )
+            return any(
+                (
+                    candidates.name is not None,
+                    candidates.dob is not None,
+                    candidates.aadhaar_last4 is not None,
+                    candidates.pincode is not None,
+                    candidates.invalid_dob,
+                    candidates.invalid_aadhaar,
+                    candidates.invalid_pincode,
+                )
+            )
+        if group is ExtractionGroup.PAYMENT:
+            candidates = parse_amount_input(user_input, allow_plain_number=True)
+            return candidates.amount is not None or candidates.full_balance
+        candidates = parse_card_input(user_input)
+        return any(
+            (
+                candidates.cardholder_name is not None,
+                candidates.card_number is not None,
+                candidates.cvv is not None,
+                candidates.expiry_month is not None
+                and candidates.expiry_year is not None,
+            )
+        )
 
     def _call_extractor(self, group: ExtractionGroup, user_input: str) -> Any:
         """Call an injected extractor once, with a forced group/tool choice.
@@ -782,18 +843,24 @@ class Agent:
             self._state = _ConversationState.VERIFIED_NEED_AMOUNT
             return {"message": self._amount_collection_message()}
 
+        # Give the configured extractor one recovery opportunity for a
+        # mismatch.  This handles a natural-language turn containing another
+        # valid factor that the regex parser missed.  The extractor can only
+        # supply candidates; the exact account comparison below remains the
+        # authority.
+        self._clear_secondary_candidates()
+        self._maybe_extract(ExtractionGroup.IDENTITY, user_input, force=True)
+        if self._identity_matches_account():
+            self._state = _ConversationState.VERIFIED_NEED_AMOUNT
+            return {"message": self._amount_collection_message()}
+
         return self._record_verification_failure()
 
     def _identity_matches_account(self) -> bool:
         if not isinstance(self._account, AccountRecord):
             return False
 
-        expected_name = self._account.full_name
-        if not isinstance(expected_name, str):
-            return False
-        if self._normalize_name(expected_name) != self._normalize_name(
-            self._name_candidate
-        ):
+        if not self._name_matches_account():
             return False
 
         return any(
@@ -808,6 +875,18 @@ class Agent:
                 == self._canonical_stored_value("pincode"),
             )
         )
+
+    def _name_matches_account(self) -> bool:
+        if not isinstance(self._account, AccountRecord):
+            return False
+
+        expected_name = self._account.full_name
+        if not isinstance(expected_name, str):
+            return False
+        return self._normalize_name(expected_name) == self._normalize_name(
+            self._name_candidate
+        )
+
 
     def _canonical_stored_value(self, field: str) -> str | None:
         if not isinstance(self._account, AccountRecord):
@@ -827,25 +906,71 @@ class Agent:
     def _is_suspicious_name(value: str | None) -> bool:
         if not isinstance(value, str):
             return False
-        return value.strip().lower().startswith(("its ", "it's "))
+        normalized = value.strip().lower()
+        return normalized.startswith(
+            (
+                "its ",
+                "it's ",
+                "for verification",
+                "i was born",
+                "i am born",
+                "just take",
+                "whatever",
+            )
+        )
+
+    @staticmethod
+    def _is_unstructured_identity_turn(user_input: str) -> bool:
+        """Identify prose that should be offered to the identity extractor.
+
+        This is deliberately a broad routing check, not a second field parser.
+        Explicit field labels and simple exact values stay on the deterministic
+        path; conversational prose such as natural-language dates is delegated
+        to the configured extractor when one is available.
+        """
+
+        if not isinstance(user_input, str):
+            return False
+        value = user_input.strip()
+        if not value:
+            return False
+        if re.fullmatch(r"[A-Za-z]+(?:\s+[A-Za-z]+){0,3}", value):
+            return False
+        if re.fullmatch(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}", value):
+            return False
+        if re.search(
+            r"\b(?:name|dob|date\s+of\s+birth|aadhaar|aadhar|pincode|"
+            r"pin\s*code)\b",
+            value,
+            re.IGNORECASE,
+        ):
+            return False
+        return True
 
     def _record_verification_failure(self) -> dict[str, str]:
+        name_matches = self._name_matches_account()
         self._verification_attempts += 1
-        self._reset_verification_candidates()
+        self._reset_verification_candidates(preserve_name=name_matches)
         if self._verification_attempts >= 3:
             self._state = _ConversationState.CLOSED_FAILURE
             self._clear_account_secrets()
             return {"message": self._VERIFICATION_LOCKED_MESSAGE}
+        if name_matches:
+            return {"message": self._SECONDARY_FACTOR_PROMPT}
         return {"message": self._VERIFICATION_FAILURE_MESSAGE}
 
-    def _reset_verification_candidates(self) -> None:
-        self._name_candidate = None
+    def _clear_secondary_candidates(self) -> None:
         self._dob_candidate = None
         self._aadhaar_candidate = None
         self._pincode_candidate = None
         self._invalid_dob_pending = False
         self._invalid_aadhaar_pending = False
         self._invalid_pincode_pending = False
+
+    def _reset_verification_candidates(self, *, preserve_name: bool = False) -> None:
+        if not preserve_name:
+            self._name_candidate = None
+        self._clear_secondary_candidates()
 
     def _reset_verification_context(self) -> None:
         self._verification_attempts = 0
