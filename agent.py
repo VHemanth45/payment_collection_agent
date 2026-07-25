@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from decimal import Decimal, InvalidOperation
 import inspect
+import logging
 import re
 from typing import Any, Callable, Mapping
 
@@ -34,6 +35,9 @@ from parsers import (
     parse_card_input,
     parse_identity_input,
 )
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class _ConversationState(Enum):
@@ -167,6 +171,28 @@ class Agent:
         """
 
         regex_turn = self._parse_regex_turn(user_input)
+        _LOGGER.debug(
+            "turn state=%s input_type=%s input_length=%s account_candidates=%s "
+            "identity(name=%s,dob=%s,aadhaar=%s,pincode=%s,invalid=%s) "
+            "amount=%s card_relevant=%s",
+            self._state.name,
+            type(user_input).__name__,
+            len(user_input) if isinstance(user_input, str) else None,
+            len(regex_turn.account_ids),
+            regex_turn.identity.name is not None,
+            regex_turn.identity.dob is not None,
+            regex_turn.identity.aadhaar_last4 is not None,
+            regex_turn.identity.pincode is not None,
+            any(
+                (
+                    regex_turn.identity.invalid_dob,
+                    regex_turn.identity.invalid_aadhaar,
+                    regex_turn.identity.invalid_pincode,
+                )
+            ),
+            regex_turn.amount.amount is not None or regex_turn.amount.full_balance,
+            regex_turn.card_relevant,
+        )
 
         if self._state is _ConversationState.CLOSED_FAILURE:
             return {"message": self._VERIFICATION_LOCKED_MESSAGE}
@@ -395,8 +421,16 @@ class Agent:
     def _maybe_extract(self, group: ExtractionGroup, user_input: str) -> None:
         """Invoke the optional extractor only for still-missing fields."""
 
-        if self._extractor is None or not self._missing_extraction_fields(group):
+        missing = self._missing_extraction_fields(group)
+        if not missing:
             return
+        if self._extractor is None:
+            _LOGGER.debug(
+                "extractor fallback unavailable group=%s reason=no_extractor",
+                group.value,
+            )
+            return
+        _LOGGER.debug("extractor fallback invoked group=%s", group.value)
         raw = self._call_extractor(group, user_input)
         self._merge_extractor_fields(group, structured_fields(group, raw))
 
@@ -650,6 +684,27 @@ class Agent:
         elif candidates.invalid_pincode:
             self._invalid_pincode_pending = True
 
+        _LOGGER.debug(
+            "identity merge state=%s parsed(name=%s,dob=%s,aadhaar=%s,pincode=%s,invalid=%s) "
+            "stored(name=%s,dob=%s,aadhaar=%s,pincode=%s)",
+            self._state.name,
+            candidates.name is not None,
+            candidates.dob is not None,
+            candidates.aadhaar_last4 is not None,
+            candidates.pincode is not None,
+            any(
+                (
+                    candidates.invalid_dob,
+                    candidates.invalid_aadhaar,
+                    candidates.invalid_pincode,
+                )
+            ),
+            self._name_candidate is not None,
+            self._dob_candidate is not None,
+            self._aadhaar_candidate is not None,
+            self._pincode_candidate is not None,
+        )
+
         if self._name_candidate is None:
             return {"message": self._FULL_NAME_PROMPT}
 
@@ -673,7 +728,16 @@ class Agent:
                 return {"message": self._INVALID_SECONDARY_FACTOR_PROMPT}
             return {"message": self._SECONDARY_FACTOR_PROMPT}
 
-        if self._identity_matches_account():
+        identity_matches = self._identity_matches_account()
+        _LOGGER.debug(
+            "identity decision name_present=%s secondary_present=%s matches=%s "
+            "verification_attempts=%s",
+            self._name_candidate is not None,
+            has_secondary,
+            identity_matches,
+            self._verification_attempts,
+        )
+        if identity_matches:
             self._state = _ConversationState.VERIFIED_NEED_AMOUNT
             return {"message": self._amount_collection_message()}
 
@@ -978,7 +1042,6 @@ class Agent:
     def _submit_payment(self) -> dict[str, str]:
         """Submit one validated payment and make the result idempotent."""
 
-        preserve_card_context = False
         try:
             payment_result = self._perform_payment()
             if (
@@ -1001,7 +1064,6 @@ class Agent:
                 PaymentStatus.INVALID_CVV,
                 PaymentStatus.INVALID_EXPIRY,
             }:
-                preserve_card_context = True
                 return self._handle_retryable_payment_failure(payment_result.status)
             self._state = _ConversationState.PAYMENT_FAILED
             if payment_result.status in {
@@ -1019,10 +1081,10 @@ class Agent:
             self._close_payment_conversation()
             return {"message": self._PAYMENT_FAILURE_MESSAGE}
         finally:
-            # Retryable API failures keep the collected card data available so
-            # the user can correct only the field the server rejected.
-            if not preserve_card_context:
-                self._reset_card_context()
+            # Raw card data must not survive any payment attempt, including a
+            # recoverable API failure. The user must resubmit card details for
+            # a later attempt.
+            self._reset_card_context()
 
     def _handle_retryable_payment_failure(
         self, status: PaymentStatus

@@ -29,6 +29,8 @@ verification, amount validation, and card validation succeed:
 python main.py
 # or, after installing the project:
 payment-collection-agent
+# safe parser/state diagnostics (written to stderr; sensitive values are not logged)
+python main.py --debug
 ```
 
 Try this sample conversation (the expiry year can be any future year):
@@ -94,6 +96,10 @@ evaluation contract.
 - Regex/normalization runs first on every turn. The optional schema-bound
   extractor can fill missing fields, but cannot decide verification or payment
   eligibility.
+- When deterministic parsing leaves required fields missing, an injected
+  extractor is invoked for the relevant schema group. The CLI does not make
+  unsolicited model/network calls; provide an extractor client explicitly when
+  LLM fallback is configured.
 - Full name matching is exact after whitespace cleanup. One exact DOB, Aadhaar
   suffix, or pincode is also required. Three complete failures close the
   conversation.

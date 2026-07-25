@@ -80,7 +80,7 @@ class SensitiveDataTests(unittest.TestCase):
         self.assertIsNone(agent._cvv)
         self.assertEqual(len(client.payment_calls), 1)
 
-    def test_recoverable_payment_failure_keeps_card_context_for_retry(self):
+    def test_recoverable_payment_failure_clears_card_context(self):
         agent, _ = amount_collected_agent(
             PaymentResult(status=PaymentStatus.INVALID_CVV)
         )
@@ -88,11 +88,11 @@ class SensitiveDataTests(unittest.TestCase):
         agent.next(CARD_TURN)
 
         self.assertIsNotNone(agent._account)
-        self.assertIsNotNone(agent._cardholder_name)
-        self.assertIsNotNone(agent._card_number)
-        self.assertIsNotNone(agent._cvv)
-        self.assertIsNotNone(agent._expiry_month)
-        self.assertIsNotNone(agent._expiry_year)
+        self.assertIsNone(agent._cardholder_name)
+        self.assertIsNone(agent._card_number)
+        self.assertIsNone(agent._cvv)
+        self.assertIsNone(agent._expiry_month)
+        self.assertIsNone(agent._expiry_year)
 
     def test_terminal_failure_and_exception_clear_sensitive_context(self):
         for result in (

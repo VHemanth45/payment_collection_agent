@@ -72,6 +72,22 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(len(client.payment_calls), 1)
         self.assertEqual(client.payment_calls[0]["amount"], Decimal("500.00"))
 
+    def test_successful_payment_accepts_unlabelled_card_fields_in_one_turn(self):
+        client = EvaluationClient()
+        agent = self._payment_ready(client)
+
+        response = agent.next(
+            "Demo Cardholder, 4532 0151 1283 0366, one two three, 12/"
+            f"{date.today().year + 1}"
+        )
+
+        self.assertIn("Payment successful", response["message"])
+        self.assertEqual(len(client.payment_calls), 1)
+        self.assertEqual(
+            client.payment_calls[0]["payment_method"]["card"]["card_number"],
+            CARD_NUMBER,
+        )
+
     def test_guided_verification_accepts_bare_aadhaar_or_pincode_digits(self):
         client = EvaluationClient()
         agent = Agent(client)
@@ -82,6 +98,38 @@ class EndToEndTests(unittest.TestCase):
 
         self.assertIn("₹1250.75", response["message"])
         self.assertEqual(client.lookup_calls, ["ACC1001"])
+
+    def test_natural_dob_turn_does_not_become_a_name(self):
+        client = EvaluationClient()
+        agent = Agent(client)
+        agent.next("ACC1001")
+        agent.next("Nithin Jain")
+
+        response = agent.next('"born 14th May 1990"')
+
+        self.assertIn("₹1250.75", response["message"])
+
+    def test_casual_nickname_prefers_explicit_full_name(self):
+        client = EvaluationClient()
+        agent = Agent(client)
+        agent.next("ACC1001")
+
+        name_response = agent.next("it's Nithin, Nithin Jain")
+        verified = agent.next("DOB 1990-05-14")
+
+        self.assertIn("verification detail", name_response["message"])
+        self.assertIn("₹1250.75", verified["message"])
+
+    def test_quoted_casual_full_name_is_normalized(self):
+        client = EvaluationClient()
+        agent = Agent(client)
+        agent.next("ACC1001")
+
+        name_response = agent.next('"it\'s Nithin, Nithin Jain"')
+        verified = agent.next('"born 14th May 1990"')
+
+        self.assertIn("verification detail", name_response["message"])
+        self.assertIn("₹1250.75", verified["message"])
 
     def test_three_failed_verification_attempts_lock_out_without_payment_or_lookup(self):
         client = EvaluationClient()

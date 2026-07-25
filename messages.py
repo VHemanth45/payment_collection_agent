@@ -63,13 +63,16 @@ INSUFFICIENT_BALANCE_MESSAGE = (
     "Please provide a smaller payment amount."
 )
 INVALID_CARD_PAYMENT_MESSAGE = (
-    "The card number was not accepted. Please enter a different card number."
+    "The card number was not accepted. Please provide all card details again "
+    "with a different card number."
 )
 INVALID_CVV_PAYMENT_MESSAGE = (
-    "The CVV was not accepted. Please enter a valid CVV."
+    "The CVV was not accepted. Please provide all card details again with a "
+    "valid CVV."
 )
 INVALID_EXPIRY_PAYMENT_MESSAGE = (
-    "The expiry date was not accepted. Please enter a valid expiry date."
+    "The expiry date was not accepted. Please provide all card details again "
+    "with a valid expiry date."
 )
 ZERO_BALANCE_MESSAGE = (
     "Your outstanding balance is ₹0.00. There is no payment amount to collect."

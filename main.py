@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from typing import TextIO
 
@@ -63,6 +64,11 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="run the local aggregate evaluation report instead of the CLI",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="log safe state and parser diagnostics to stderr",
+    )
     return parser
 
 
@@ -72,6 +78,11 @@ def main(argv: list[str] | None = None) -> int:
         from evaluation import main as evaluation_main
 
         return evaluation_main([])
+    if args.debug:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(levelname)s %(name)s: %(message)s",
+        )
     return run_cli(
         build_agent(),
         show_banner=not args.no_banner,

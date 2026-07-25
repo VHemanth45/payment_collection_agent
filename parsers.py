@@ -107,6 +107,9 @@ _I_AM_NAME_PATTERN = re.compile(
     r"dob|aadhaar|aadhar|pin\s*code|pincode)\b|$)",
     re.IGNORECASE,
 )
+_CASUAL_NAME_PATTERN = re.compile(
+    r"^\s*(?:it['’]s|it is)\s+(?P<value>.+?)\s*$", re.IGNORECASE
+)
 _AADHAAR_PATTERN = re.compile(
     r"\b(?:aadhaar|aadhar)\b[^,;]*?(?P<digits>\d(?:[\s-]*\d){0,15})",
     re.IGNORECASE,
@@ -286,7 +289,7 @@ def parse_identity_input(
     if name is None:
         date_match = _DATE_PATTERN.search(user_input)
         if date_match:
-            prefix = user_input[: date_match.start()].strip(" \t,;:-")
+            prefix = user_input[: date_match.start()].strip(" \t,;:-\"'")
             if re.search(
                 r"\b(?:exp(?:iry|iration)?|expires?|valid\s*(?:thru|through))\b\s*$",
                 prefix,
@@ -298,7 +301,13 @@ def parse_identity_input(
                 "",
                 prefix,
                 flags=re.IGNORECASE,
-            ).strip(" \t,;:-")
+            ).strip(" \t,;:-\"'")
+            prefix = re.sub(
+                r"(?:i\s+was\s+)?born(?:\s+on)?\s*$",
+                "",
+                prefix,
+                flags=re.IGNORECASE,
+            ).strip(" \t,;:-\"'")
             if prefix and not re.fullmatch(
                 r"(?:date\s+of\s+birth|dob)\s*(?:is|:)?",
                 prefix.strip(),
@@ -335,7 +344,26 @@ def parse_identity_input(
                 and not _looks_like_amount_input(user_input)
                 and user_input.strip()
             ):
-                name = clean_name(user_input)
+                casual_name = _CASUAL_NAME_PATTERN.match(
+                    user_input.strip().strip("\"'")
+                )
+                if casual_name:
+                    parts = [
+                        clean_name(part)
+                        for part in casual_name.group("value").split(",")
+                    ]
+                    # Prefer a later, multi-word full name in inputs such as
+                    # "it's Nithin, Nithin Jain" over the nickname.
+                    name = next(
+                        (
+                            part
+                            for part in reversed(parts)
+                            if len(part.split()) >= 2
+                        ),
+                        parts[-1] if parts else "",
+                    )
+                else:
+                    name = clean_name(user_input)
 
     if allow_unlabeled_factors and re.fullmatch(r"\s*\d+\s*", user_input):
         digits = user_input.strip()
@@ -693,6 +721,32 @@ def parse_card_input(user_input: str) -> CardCandidates:
         r"\s*(?:[a-z]+(?:[\s-]+[a-z]+){2,3})\s*", value, re.IGNORECASE
     ):
         cvv = _parse_spoken_cvv(value)
+
+    # A complete card submission may be supplied as prose without labels,
+    # e.g. ``Name, card-number, CVV, MM/YYYY``.  The card number is the
+    # reliable anchor; only use the remaining comma/semicolon-separated
+    # parts for fields that were not already extracted by labels.
+    positional_parts = [
+        part.strip() for part in re.split(r"[,;]", value) if part.strip()
+    ]
+    if card_number is not None and len(positional_parts) > 1:
+        for part in positional_parts:
+            if normalize_card_number(part) == card_number:
+                continue
+            if cardholder_name is None and re.search(r"[A-Za-z]", part):
+                if not re.search(
+                    r"\b(?:cardholder|card\s*(?:number|no\.?|#)|"
+                    r"number\s+on\s+card|cvv|cvc|security\s+code|"
+                    r"exp(?:iry|iration)?|expires?|valid\s*(?:thru|through))\b",
+                    part,
+                    re.IGNORECASE,
+                ):
+                    cardholder_name = clean_name(part)
+            if cvv is None:
+                positional_cvv = _parse_spoken_cvv(part)
+                if positional_cvv is not None:
+                    cvv = positional_cvv
+                    invalid_cvv = False
 
     expiry_month: int | None = None
     expiry_year: int | None = None

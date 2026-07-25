@@ -566,11 +566,11 @@ class PaymentFailureTests(unittest.TestCase):
         response = agent.next(self._card_turn())
         self.assertIn("smaller", response["message"])
         self.assertEqual(agent._state.name, "VERIFIED_NEED_AMOUNT")
-        self.assertIsNotNone(agent._cardholder_name)
-        self.assertIsNotNone(agent._card_number)
-        self.assertIsNotNone(agent._cvv)
-        self.assertIsNotNone(agent._expiry_month)
-        self.assertIsNotNone(agent._expiry_year)
+        self.assertIsNone(agent._cardholder_name)
+        self.assertIsNone(agent._card_number)
+        self.assertIsNone(agent._cvv)
+        self.assertIsNone(agent._expiry_month)
+        self.assertIsNone(agent._expiry_year)
 
         self.assertEqual(agent.next("400"), {"message": Agent._AMOUNT_ACCEPTED_MESSAGE})
         success = agent.next(self._card_turn())
@@ -589,17 +589,17 @@ class PaymentFailureTests(unittest.TestCase):
         self.assertIn("card number", response["message"])
         self.assertNotIn("4532015112830366", response["message"])
         self.assertNotIn("123", response["message"])
-        self.assertIsNotNone(agent._cardholder_name)
-        self.assertIsNotNone(agent._card_number)
-        self.assertIsNotNone(agent._cvv)
-        self.assertIsNotNone(agent._expiry_month)
-        self.assertIsNotNone(agent._expiry_year)
+        self.assertIsNone(agent._cardholder_name)
+        self.assertIsNone(agent._card_number)
+        self.assertIsNone(agent._cvv)
+        self.assertIsNone(agent._expiry_month)
+        self.assertIsNone(agent._expiry_year)
 
         success = agent.next(self._card_turn())
         self.assertIn("txn_corrected", success["message"])
         self.assertEqual(len(client.payment_calls), 2)
 
-    def test_api_invalid_cvv_keeps_other_card_fields_for_single_field_retry(self) -> None:
+    def test_api_invalid_cvv_clears_card_context_before_retry(self) -> None:
         agent, client = self._amount_collected_agent(
             [
                 PaymentResult(status=PaymentStatus.INVALID_CVV),
@@ -609,16 +609,20 @@ class PaymentFailureTests(unittest.TestCase):
 
         response = agent.next(self._card_turn())
         self.assertIn("CVV", response["message"])
-        self.assertIsNotNone(agent._cardholder_name)
-        self.assertIsNotNone(agent._card_number)
-        self.assertIsNotNone(agent._expiry_month)
-        self.assertIsNotNone(agent._expiry_year)
+        self.assertIsNone(agent._cardholder_name)
+        self.assertIsNone(agent._card_number)
+        self.assertIsNone(agent._cvv)
+        self.assertIsNone(agent._expiry_month)
+        self.assertIsNone(agent._expiry_year)
 
-        success = agent.next("654")
+        success = agent.next(
+            "cardholder name: Someone Else, card number: 4532-0151-1283-0366, "
+            "CVV: 654, expiry: 12/2027"
+        )
         self.assertIn("txn_cvv_corrected", success["message"])
         self.assertEqual(len(client.payment_calls), 2)
 
-    def test_api_invalid_expiry_keeps_other_card_fields_for_single_field_retry(self) -> None:
+    def test_api_invalid_expiry_clears_card_context_before_retry(self) -> None:
         agent, client = self._amount_collected_agent(
             [
                 PaymentResult(status=PaymentStatus.INVALID_EXPIRY),
@@ -631,13 +635,16 @@ class PaymentFailureTests(unittest.TestCase):
             "CVV: 123, expiry: 12/2027"
         )
         self.assertIn("expiry", response["message"])
-        self.assertIsNotNone(agent._cardholder_name)
-        self.assertIsNotNone(agent._card_number)
-        self.assertIsNotNone(agent._cvv)
-        self.assertIsNotNone(agent._expiry_month)
-        self.assertIsNotNone(agent._expiry_year)
+        self.assertIsNone(agent._cardholder_name)
+        self.assertIsNone(agent._card_number)
+        self.assertIsNone(agent._cvv)
+        self.assertIsNone(agent._expiry_month)
+        self.assertIsNone(agent._expiry_year)
 
-        success = agent.next("12/2028")
+        success = agent.next(
+            "cardholder name: Someone Else, card number: 4532-0151-1283-0366, "
+            "CVV: 123, expiry: 12/2028"
+        )
         self.assertIn("txn_expiry_corrected", success["message"])
         self.assertEqual(len(client.payment_calls), 2)
 
