@@ -5,6 +5,11 @@ interface is `Agent.next(user_input) -> {"message": str}`. Account lookup and
 payment clients are injectable, so the same conversation can be tested without
 network access.
 
+
+![Sequence Diagram](diagram-export-7-25-2026-6_27_17-PM.png)
+
+
+
 ## Setup
 
 This project uses Python 3.14+ and has one runtime dependency, Pydantic 2.
