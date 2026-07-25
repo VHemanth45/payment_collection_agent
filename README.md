@@ -31,6 +31,15 @@ python main.py
 payment-collection-agent
 # safe parser/state diagnostics (written to stderr; sensitive values are not logged)
 python main.py --debug
+
+# optional local Ollama fallback
+PAYMENT_AGENT_LLM=ollama OLLAMA_MODEL=llama3.2 python main.py
+
+# optional Claude fallback
+PAYMENT_AGENT_LLM=anthropic ANTHROPIC_API_KEY=your-key python main.py
+# explicitly opt in to sending raw card fields to Claude (not recommended)
+PAYMENT_AGENT_LLM=anthropic PAYMENT_AGENT_ALLOW_SENSITIVE_LLM=true \
+  ANTHROPIC_API_KEY=your-key python main.py
 ```
 
 Try this sample conversation (the expiry year can be any future year):
@@ -79,6 +88,13 @@ Run the aggregate evaluation notes with:
 python -m evaluation
 # or
 python main.py --evaluate
+
+# LLM-driven persona simulation and judging (requires GROQ_API_KEY and the groq SDK)
+GROQ_API_KEY=your-key python -m evaluation --groq
+# or through the main entry point
+GROQ_API_KEY=your-key python main.py --evaluate --groq
+# use --quiet only when the live conversation logs are not wanted
+GROQ_API_KEY=your-key python main.py --evaluate --groq --quiet
 ```
 
 The end-to-end suite covers full and partial payments, strict verification and

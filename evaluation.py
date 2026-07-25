@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import date
+import json
+import sys
 from typing import Any
 
 from agent import Agent
@@ -148,7 +150,29 @@ def run_evaluation() -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    del argv
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Evaluate the payment agent.")
+    parser.add_argument(
+        "--groq", action="store_true", help="run the LLM persona/evaluator suite"
+    )
+    parser.add_argument("--scenarios", type=int, default=8)
+    parser.add_argument(
+        "--quiet", action="store_true", help="hide live persona/agent conversation logs"
+    )
+    args = parser.parse_args(argv)
+    if args.groq:
+        from groq_evaluator import SCENARIOS, run_groq_evaluation
+
+        try:
+            report = run_groq_evaluation(
+                scenarios=SCENARIOS[: args.scenarios], verbose=not args.quiet
+            )
+        except (RuntimeError, ValueError) as error:
+            print(f"Groq evaluation failed: {error}", file=sys.stderr)
+            return 2
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return 0 if report["failed"] == 0 else 1
     report = run_evaluation()
     print("Payment collection agent evaluation")
     for name, value in report.items():

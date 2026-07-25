@@ -9,12 +9,13 @@ from typing import TextIO
 
 from agent import Agent
 from api_client import ApiClient
+from llm_extractors import extractor_from_environment
 
 
 def build_agent() -> Agent:
     """Build the conversational CLI agent backed by the supplied HTTP API."""
 
-    return Agent(api_client=ApiClient())
+    return Agent(api_client=ApiClient(), extractor=extractor_from_environment())
 
 
 def run_cli(
@@ -65,9 +66,25 @@ def _parser() -> argparse.ArgumentParser:
         help="run the local aggregate evaluation report instead of the CLI",
     )
     parser.add_argument(
+        "--groq",
+        action="store_true",
+        help="use Groq to generate personas and judge evaluation scenarios",
+    )
+    parser.add_argument(
+        "--scenarios",
+        type=int,
+        default=8,
+        help="number of Groq evaluation scenarios to run",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="log safe state and parser diagnostics to stderr",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="hide live Groq evaluator conversation logs",
     )
     return parser
 
@@ -77,7 +94,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.evaluate:
         from evaluation import main as evaluation_main
 
-        return evaluation_main([])
+        evaluation_args = []
+        if args.groq:
+            evaluation_args.extend(["--groq", "--scenarios", str(args.scenarios)])
+            if args.quiet:
+                evaluation_args.append("--quiet")
+        return evaluation_main(evaluation_args)
     if args.debug:
         logging.basicConfig(
             level=logging.DEBUG,

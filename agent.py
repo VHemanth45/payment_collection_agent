@@ -308,7 +308,11 @@ class Agent:
         """Merge fast-path values into conversation-local context."""
 
         identity = regex_turn.identity
-        if identity.name is not None:
+        if identity.name is not None and not (
+            self._name_candidate is not None
+            and not self._name_candidate.strip().lower().startswith(("its ", "it's "))
+            and identity.name.strip().lower().startswith(("its ", "it's "))
+        ):
             self._name_candidate = identity.name
         if identity.dob is not None:
             self._dob_candidate = identity.dob
@@ -422,7 +426,11 @@ class Agent:
         """Invoke the optional extractor only for still-missing fields."""
 
         missing = self._missing_extraction_fields(group)
-        if not missing:
+        suspicious_name = (
+            group is ExtractionGroup.IDENTITY
+            and self._is_suspicious_name(self._name_candidate)
+        )
+        if not missing and not suspicious_name:
             return
         if self._extractor is None:
             _LOGGER.debug(
@@ -430,9 +438,29 @@ class Agent:
                 group.value,
             )
             return
+        if (
+            group is ExtractionGroup.CARD
+            and getattr(self._extractor, "allow_sensitive_data", True) is False
+        ):
+            _LOGGER.debug(
+                "extractor fallback skipped group=%s reason=sensitive_data_policy",
+                group.value,
+            )
+            return
         _LOGGER.debug("extractor fallback invoked group=%s", group.value)
+        previous_name = self._name_candidate
+        if suspicious_name:
+            self._name_candidate = None
         raw = self._call_extractor(group, user_input)
-        self._merge_extractor_fields(group, structured_fields(group, raw))
+        fields = structured_fields(group, raw)
+        _LOGGER.debug(
+            "extractor fallback result group=%s fields_present=%s",
+            group.value,
+            [name for name, value in fields.items() if value is not None],
+        )
+        self._merge_extractor_fields(group, fields)
+        if suspicious_name and self._name_candidate is None:
+            self._name_candidate = previous_name
 
     def _call_extractor(self, group: ExtractionGroup, user_input: str) -> Any:
         """Call an injected extractor once, with a forced group/tool choice.
@@ -457,6 +485,9 @@ class Agent:
             try:
                 return method(request)
             except Exception:
+                _LOGGER.debug(
+                    "extractor call failed group=%s stage=direct", group.value
+                )
                 return None
 
         parameters = list(signature.parameters.values())
@@ -475,6 +506,9 @@ class Agent:
             try:
                 return method(request)
             except Exception:
+                _LOGGER.debug(
+                    "extractor call failed group=%s stage=request", group.value
+                )
                 return None
 
         values = {
@@ -512,6 +546,9 @@ class Agent:
         try:
             return method(*positional, **keyword)
         except Exception:
+            _LOGGER.debug(
+                "extractor call failed group=%s stage=adapted", group.value
+            )
             return None
 
     def _merge_extractor_fields(
@@ -666,7 +703,11 @@ class Agent:
         candidates = parse_identity_input(
             user_input, allow_unlabeled_factors=True
         )
-        if candidates.name is not None:
+        if candidates.name is not None and not (
+            self._name_candidate is not None
+            and not self._is_suspicious_name(self._name_candidate)
+            and self._is_suspicious_name(candidates.name)
+        ):
             self._name_candidate = candidates.name
         if candidates.dob is not None:
             self._dob_candidate = candidates.dob
@@ -781,6 +822,12 @@ class Agent:
         if not isinstance(value, str):
             return ""
         return " ".join(value.strip().split())
+
+    @staticmethod
+    def _is_suspicious_name(value: str | None) -> bool:
+        if not isinstance(value, str):
+            return False
+        return value.strip().lower().startswith(("its ", "it's "))
 
     def _record_verification_failure(self) -> dict[str, str]:
         self._verification_attempts += 1

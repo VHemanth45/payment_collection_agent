@@ -33,6 +33,27 @@ class RecordingExtractor:
 
 
 class HybridExtractionTests(unittest.TestCase):
+    def test_suspicious_nonempty_name_is_replaced_by_extractor_fallback(self):
+        client = LookupAndPaymentClient()
+        extractor = RecordingExtractor(
+            {
+                ExtractionGroup.IDENTITY: {
+                    "name": "Nithin Jain",
+                    "dob": None,
+                    "aadhaar_last4": None,
+                    "pincode": None,
+                }
+            }
+        )
+        agent = Agent(client, extractor=extractor)
+
+        agent.next("ACC1001")
+        response = agent.next("its Nithin Jain")
+
+        self.assertIn("verification detail", response["message"])
+        self.assertEqual(agent._name_candidate, "Nithin Jain")
+        self.assertEqual(extractor.calls[-1].group, ExtractionGroup.IDENTITY)
+
     def test_only_missing_current_group_is_extracted_with_forced_tool_choice(self):
         client = LookupAndPaymentClient()
         extractor = RecordingExtractor(
@@ -156,4 +177,3 @@ class HybridExtractionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
