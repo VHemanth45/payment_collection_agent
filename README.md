@@ -252,6 +252,26 @@ You: 12/2024
 Agent: Payment failed (invalid_expiry): please provide a valid expiry date.
 ```
 
+### Example 9: Verification retry limit and account lockout
+
+When secondary verification factors fail three consecutive times, identity verification fails and the conversation is closed.
+
+```text
+Payment Collection Agent
+Type :quit to exit.
+Agent: Let's get started. What is your account ID? (Example: ACC1002)
+You: acc1003
+Agent: Thanks. What is your full name exactly as it appears on the account?
+You: Priya Agarwal
+Agent: To verify you, provide one verification detail: DOB (YYYY-MM-DD), Aadhaar last four digits, or your six-digit pincode. You can send just the digits.
+You: 1991-01-01
+Agent: To verify you, provide one verification detail: DOB (YYYY-MM-DD), Aadhaar last four digits, or your six-digit pincode. You can send just the digits.
+You: 1111
+Agent: To verify you, provide one verification detail: DOB (YYYY-MM-DD), Aadhaar last four digits, or your six-digit pincode. You can send just the digits.
+You: 999999
+Agent: I couldn't verify your identity after three attempts. This conversation is now closed.
+```
+
 Use `:quit` to leave. The CLI requires network access to the configured
 service and a valid test account/card approved for that environment. No live
 smoke test is run by the local test suite; the evaluation runner uses injected
