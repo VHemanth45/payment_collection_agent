@@ -121,6 +121,7 @@ Agent: What is the card expiry date? Use MM/YYYY.
 You: dec 2029
 Agent: Payment successful. Transaction ID: txn_****0363_rbi8yaa. Account ID: ACC1001. Amount: ₹500.00. Status: successful.
 ```
+As you can see the Name and account Id is given in One go, so again we are not asking name.
 
 ### Example 4: Verification-factor retry
 
